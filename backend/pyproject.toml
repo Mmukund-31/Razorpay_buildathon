@@ -1,0 +1,65 @@
+[project]
+name = "recoveryos-backend"
+version = "0.1.0"
+description = "RecoveryOS backend — autonomous revenue recovery control plane"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "httpx>=0.27",
+    "python-json-logger>=2.0",
+    # ml/inference/predictor.py loads a joblib-persisted sklearn Pipeline at runtime — the
+    # backend process needs the same stack ml/ trained with, not just ml/'s own venv.
+    "scikit-learn>=1.5",
+    "lightgbm>=4.5",
+    "pandas>=2.2",
+    "joblib>=1.4",
+    # app/agents/ai_diagnostician.py's real LLM call (Phase 8).
+    "anthropic>=0.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "respx>=0.21",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: pure-logic tests, no external dependencies",
+    "smoke: app-wiring tests, no external dependencies",
+    "integration: requires a reachable PostgreSQL database",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# B008 (function call in default arg) is standard, idiomatic FastAPI (Depends()/Body()) —
+# not a real bug here.
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+disallow_untyped_defs = false
+plugins = ["sqlalchemy.ext.mypy.plugin"]

@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.cover
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Database
+*.sqlite3
+*.db
+
+# ML artifacts
+ml/data/*.csv
+ml/data/*.parquet
+ml/training/artifacts/
+*.pkl
+*.joblib
+
+# Benchmark output (reproducible via simulator/benchmark/baseline_runner.py)
+simulator/benchmark/results/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Alembic (keep migrations, ignore local sqlite fallback if any)
+*.sqlite
+
+# Logs
+*.log
