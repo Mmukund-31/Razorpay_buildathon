@@ -14,7 +14,7 @@ export default function AuditLedger() {
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
       <p className="mb-3 text-xs text-slate-500">
-        {data.total} entries · immutable — see app/repositories/audit_log_repository.py
+        {data.total} entries · append-only — see app/repositories/audit_log_repository.py
       </p>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-left text-sm">

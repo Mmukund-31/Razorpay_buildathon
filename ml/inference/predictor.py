@@ -21,7 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 ARTIFACTS_DIR = REPO_ROOT / "ml" / "training" / "artifacts"
 ACTIVE_MODEL_MANIFEST = ARTIFACTS_DIR / "active_model.json"
 
-from ml.features.feature_definitions import FEATURE_NAMES  # noqa: E402
+from ml.features.feature_definitions import FEATURE_NAMES
 
 
 class ActiveModel:

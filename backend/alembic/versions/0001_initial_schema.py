@@ -10,16 +10,17 @@ payment", and the unique index preventing duplicate recovery_opportunities. No n
 Postgres ENUM types, no pgcrypto/uuid-ossp extensions (see docs/decisions.md ADR-001).
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
+
 revision: str = "0001"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -162,7 +163,10 @@ def upgrade() -> None:
         sa.Column("currency", sa.String(length=3), nullable=False),
         sa.Column("detected_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
-            "source_event_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("webhook_events.id"), nullable=True
+            "source_event_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("webhook_events.id"),
+            nullable=True,
         ),
         sa.Column("status", sa.String(), nullable=False, server_default="OPEN"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -235,7 +239,10 @@ def upgrade() -> None:
         "policy_evaluations",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "recovery_case_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("recovery_cases.id"), nullable=False
+            "recovery_case_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("recovery_cases.id"),
+            nullable=False,
         ),
         sa.Column("candidate_action", sa.String(), nullable=False),
         sa.Column("allowed", sa.Boolean(), nullable=False),
@@ -252,7 +259,10 @@ def upgrade() -> None:
         "recovery_actions",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "recovery_case_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("recovery_cases.id"), nullable=False
+            "recovery_case_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("recovery_cases.id"),
+            nullable=False,
         ),
         sa.Column("action_type", sa.String(), nullable=False),
         sa.Column("status", sa.String(), nullable=False, server_default="PENDING"),
@@ -296,11 +306,17 @@ def upgrade() -> None:
         "agent_decisions",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "recovery_case_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("recovery_cases.id"), nullable=False
+            "recovery_case_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("recovery_cases.id"),
+            nullable=False,
         ),
         sa.Column("decision_type", sa.String(), nullable=False),
         sa.Column(
-            "model_version_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("model_versions.id"), nullable=True
+            "model_version_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("model_versions.id"),
+            nullable=True,
         ),
         sa.Column("input_features", postgresql.JSONB(), nullable=True),
         sa.Column("raw_output", postgresql.JSONB(), nullable=False),
@@ -316,7 +332,7 @@ def upgrade() -> None:
     )
     op.create_index("idx_agent_decisions_case", "agent_decisions", ["recovery_case_id"])
 
-    # --- audit_logs (immutable ledger — see docs/security.md) ---
+    # --- audit_logs (append-only ledger — see docs/security.md) ---
     op.create_table(
         "audit_logs",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),

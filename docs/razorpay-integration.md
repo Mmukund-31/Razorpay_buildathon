@@ -68,9 +68,17 @@ request/response shape:
 - Request: `amount`, `currency`, `reference_id`, `description`, `customer.{name,email,
   contact}`, `notify.{sms,email}` (booleans — Razorpay sends the notification itself),
   `expire_by` (unix timestamp, 15 min to 6 months out), `callback_url` + `callback_method`,
-  `notes` (up to 15 key-value pairs).
+  `notes` (up to 15 key-value pairs), `accept_partial` (boolean).
 - Response: `id` (`plink_...`), `short_url`, `status` (`created` / `partially_paid` / `paid` /
   `expired` / `cancelled`).
+
+**`accept_partial` is always sent as `false`** (`payment_link_adapter.py`). Razorpay Payment
+Links natively support letting a customer settle less than the requested amount, moving
+`status` to `partially_paid` rather than `paid` — RecoveryOS never wants this for a recovery
+link: the amount was already computed by the optimizer/policy as the exact figure a
+policy-approved action is allowed to collect, and `outcome_service.reconcile_outcome()` has no
+branch for "partially resolved" (see `docs/limitations.md`). Setting this explicitly, rather
+than relying on Razorpay's default, is what makes that assumption safe to depend on.
 
 So **SMART_RETRY**, **DELAYED_RETRY**, and the payment-link half of
 **CUSTOMER_ACTION_REQUEST** are all implemented as *creating a fresh Payment Link and letting
@@ -132,7 +140,20 @@ stub: `webhook_verifier.py` (real signature verification), the webhook ingestion
 credential availability via `gateway_factory.py` — falling back to `simulator_gateway.py`
 only when `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` aren't configured, per §7/§8's real-vs-
 simulated rule), and `outcome_service.py` (real payment-link recovery correlation — §10
-below).
+below). Bounded retry/backoff on transient failures (timeout, 429, 5xx — never 4xx) is
+implemented in `razorpay_client.py` and tested against all three failure modes independently
+(`tests/integration/test_razorpay_adapter.py`), not just the generic 5xx case.
+
+**Live Test Mode verification**: attempted twice in the final submission pass, using
+`RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` provided specifically for this purpose. Both attempts
+called `PaymentLinkAdapter.create_payment_link()` — the real production code path, not a
+standalone script bypassing it — and both were rejected by Razorpay with `401 Authentication
+failed`. The loaded credential values were independently verified to be clean (correct
+lengths, no leading/trailing whitespace, `key_id` starting `rzp_test_` as expected); the
+key/secret pair itself does not authenticate against Razorpay. Per this project's own
+no-fabrication rule, this stays honestly marked **unverified against a live account** rather
+than reported as a success — see `docs/limitations.md`. Whoever finishes the submission can
+re-attempt with a freshly-copied key pair from the Razorpay Test Mode dashboard.
 
 ## 10. Payment-link recovery correlation
 

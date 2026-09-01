@@ -7,8 +7,9 @@ here is derived from information that would only be known after the recovery out
 "was this recovered" or "which action was eventually taken" are excluded on purpose — see
 docs/ml-evaluation.md, Phase 18, for the full leakage-prevention discussion).
 
-TODO(phase-4): implement the synthetic data generator against exactly this feature list.
-TODO(phase-6): implement app/agents/ml_predictor.py's feature-vector builder against it.
+Both consumers are implemented against exactly this feature list: the synthetic data
+generator (ml/data/synthetic_generator.py) and app/agents/ml_predictor.py's feature-vector
+builder.
 """
 
 from dataclasses import dataclass

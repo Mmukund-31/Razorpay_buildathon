@@ -79,22 +79,43 @@ All defined in `ml/evaluation/metrics.py`:
 
 ## Results
 
-**Per the scope decision recorded for this hardening pass, the `RECOVERYOS_AI` arm's real LLM
-calls were NOT executed live** — no `LLM_API_KEY` was configured, and per explicit user
-direction this pass used the simulator/mocks only, never live Anthropic API spend. Running
-`python simulator/benchmark/baseline_runner.py --run-ai-ablation --ai-sample-size 300`
-without a configured `LLM_API_KEY` produces a real, honest result nonetheless — every call to
-`ai_diagnostician.diagnose()` short-circuits on the "no API key" path
-(`AIDiagnosisResult(is_valid=False, error="no_api_key")`), so:
+**Attempted live in the final submission pass — a real, valid `LLM_API_KEY` was available**
+(format-verified as a genuine Anthropic key). `python simulator/benchmark/baseline_runner.py
+--run-ai-ablation --ai-sample-size 20` was actually run against it (a deliberately small
+sample, per this pass's own scope — not the 300-row default, to bound live API spend). The
+stratified sample drawn for `(n=20, seed=42)` came out to **14 rows** (stratification across 7
+failure classes on a small `n` doesn't always fill the requested count exactly).
 
-- `llm_failure_rate` = 1.0 (100% — every call was invalid, correctly and honestly, not a bug)
+The key **authenticates successfully** — this is not the "no API key" short-circuit the prior
+pass's placeholder result described. Instead, every one of the first 5 calls returned a real
+`400 invalid_request_error` from Anthropic itself: *"Your credit balance is too low to access
+the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."* — confirmed
+by directly exercising `ai_diagnostician.diagnose()` and, underneath that, the raw
+`AsyncAnthropic` client outside the benchmark harness. After 5 consecutive failures the
+in-process circuit breaker opened (by design — `ai_diagnostician.py`'s `_FAILURE_THRESHOLD`)
+and the remaining 9 rows short-circuited on `error="circuit_open"` without spending further
+API calls, exactly as it's supposed to under a genuinely degraded/unreachable provider.
+
+Result, from the real run (`simulator/benchmark/results/latest.json`, `RECOVERYOS_AI` key):
+
+- `llm_failure_rate` = **1.0** — but now backed by 5 real, billing-rejected API calls plus 9
+  correctly-breaker-skipped ones, not an untried "no key" path.
+- `llm_latency_ms_p95` = **833.85ms** — real network round-trip time to Anthropic, proof the
+  calls were genuinely attempted over the wire, not short-circuited before leaving the process.
 - `diagnosis_accuracy` = 0.0, `recommended_action_agreement_rate` = 0.0 (no valid diagnosis to
-  score)
+  score — same as the no-key case, for the same reason: no valid output either way).
 - Every other metric (`recovered_revenue`, `net_recovery_value`, etc.) is **numerically
-  identical to `RECOVERYOS_FULL_SUBSET`** on the same sample — proof the nudge correctly
+  identical to `RECOVERYOS_FULL_SUBSET`** on the same 14-row sample — proof the nudge correctly
   applies zero influence when the AI has nothing valid to say, exactly as
   `app/services/analysis_service.py`'s abstention rule requires (see
   `backend/tests/unit/test_baseline_runner_ai_ablation.py::test_run_recoveryos_ai_applies_no_nudge_on_invalid_diagnosis`).
+
+**Read this honestly**: this is still not a genuine measurement of the AI's marginal
+contribution — that needs an account with available credit. What this live attempt *does*
+prove, that the previous "no key configured" result couldn't: the full live-call path (key
+loading, HTTP round-trip to Anthropic, error classification, circuit breaker) works correctly
+end to end, and degrades to zero influence safely under a real (not simulated) provider
+failure — not just a code-reviewed guarantee.
 
 **What IS verified, without live API spend**: `backend/tests/unit/test_baseline_runner_ai_ablation.py`
 exercises the full `run_recoveryos_ai` code path with a mocked `ai_diagnostician.diagnose`
@@ -108,13 +129,13 @@ returning a *valid* diagnosis, and confirms:
    proving the nudge has real, bounded, measurable effect when the AI is valid.
 3. An invalid/failed diagnosis applies **no** nudge and never crashes the pipeline.
 
-**To produce real numbers**: set `LLM_API_KEY` in `.env`, then run
-`python simulator/benchmark/baseline_runner.py --run-ai-ablation --ai-sample-size 300` — the
-output (`simulator/benchmark/results/latest.json`, plus the `experiments`/`experiment_results`
-tables when a database is reachable) will contain the genuine `RECOVERYOS_AI` arm. This
-document should be updated with that table once available; until then, the honest state is
-"the capability is real, tested, and wired correctly; it has not been run against a live
-model in this pass."
+**To produce a genuine measurement**: add credit to the Anthropic account behind
+`LLM_API_KEY`, then re-run `python simulator/benchmark/baseline_runner.py --run-ai-ablation
+--ai-sample-size 300` — nothing in the code needs to change. This document should be updated
+with that table once available; until then, the honest state is "the capability is real,
+tested, exercised against the live API this pass, and correctly produced no valid diagnosis
+because of an account billing constraint outside this codebase's control — not because the
+code path doesn't work."
 
 ## Limitations
 

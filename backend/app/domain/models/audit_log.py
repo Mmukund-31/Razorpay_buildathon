@@ -1,11 +1,12 @@
-"""audit_logs — the immutable Recovery Ledger. Every hop of the pipeline appends one row.
+"""audit_logs — the append-only Recovery Ledger. Every hop of the pipeline appends one row.
 
-Immutability in Phase 1 is enforced at the application layer: `AuditLogRepository` (see
-app/repositories/audit_log_repository.py) exposes only `add()`/read methods — there is no
+Append-only behavior in Phase 1 is enforced at the application layer: `AuditLogRepository`
+(see app/repositories/audit_log_repository.py) exposes only `add()`/read methods — there is no
 update/delete code path anywhere in the codebase, verified by
-tests/unit/test_audit_log_immutability.py. A DB-level `REVOKE UPDATE, DELETE` for a dedicated
-least-privilege app role is documented as a production hardening step in docs/security.md, not
-required for local/demo `docker-compose` (see docs/decisions.md ADR-001 note).
+tests/unit/test_audit_log_immutability.py. This is an application-layer guarantee, not a
+DB-enforced one: a dedicated least-privilege app role with `REVOKE UPDATE, DELETE` is
+documented as a production hardening step in docs/security.md, not required for local/demo
+`docker-compose` (see docs/decisions.md ADR-001 note).
 """
 
 import uuid

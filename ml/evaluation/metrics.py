@@ -10,6 +10,8 @@ policy_rejected (bool), attempts (int). `risk_cost` (float) is required only for
 `net_recovery_value`; `predicted_probability` is required only for `calibration_error`.
 """
 
+from itertools import pairwise
+
 import numpy as np
 
 
@@ -165,7 +167,7 @@ def calibration_error(predicted_probabilities: list[float], actual_outcomes: lis
     bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
     total = len(probs)
     error = 0.0
-    for lo, hi in zip(bin_edges[:-1], bin_edges[1:], strict=True):
+    for lo, hi in pairwise(bin_edges):
         upper = probs <= hi if hi >= 1.0 else probs < hi
         mask = (probs >= lo) & upper
         if not mask.any():

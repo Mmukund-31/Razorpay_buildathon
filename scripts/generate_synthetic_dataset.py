@@ -15,7 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from ml.data.synthetic_generator import generate, split  # noqa: E402
+from ml.data.synthetic_generator import generate, split
 
 DATA_DIR = REPO_ROOT / "ml" / "data"
 

@@ -39,7 +39,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root, for `import ml.*`
 
-from ml.features.feature_definitions import FEATURE_NAMES  # noqa: E402
+from ml.features.feature_definitions import FEATURE_NAMES
 
 DATASET_VERSION = "synthetic-v1"
 

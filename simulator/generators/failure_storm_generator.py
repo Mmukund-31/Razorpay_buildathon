@@ -6,7 +6,10 @@ payment-failure events, as full Razorpay-shaped webhook payloads ready to POST t
 
 import numpy as np
 
-from simulator.generators.event_generator import build_payment_failed_event, new_simulated_payment
+from simulator.generators.event_generator import (
+    build_payment_failed_event,
+    new_simulated_payment,
+)
 
 DEFAULT_FAILURE_DISTRIBUTION = {
     "INSUFFICIENT_FUNDS": 0.30,

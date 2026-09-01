@@ -5,6 +5,8 @@ metrics computed exactly the same way.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import numpy as np
 from sklearn.metrics import (
     average_precision_score,
@@ -22,7 +24,7 @@ def evaluate(model, x, y) -> dict:
     predictions = (probabilities >= 0.5).astype(int)
 
     return {
-        "n": int(len(y)),
+        "n": len(y),
         "positive_rate": round(float(np.mean(y)), 4),
         "roc_auc": round(float(roc_auc_score(y, probabilities)), 4),
         "average_precision": round(float(average_precision_score(y, probabilities)), 4),
@@ -48,7 +50,7 @@ def _expected_calibration_error(y, probabilities, n_bins: int = 10) -> float:
         return 0.0
 
     error = 0.0
-    for lo, hi in zip(bin_edges[:-1], bin_edges[1:], strict=True):
+    for lo, hi in pairwise(bin_edges):
         upper_bound = probabilities <= hi if hi >= 1.0 else probabilities < hi
         mask = (probabilities >= lo) & upper_bound
         if not mask.any():

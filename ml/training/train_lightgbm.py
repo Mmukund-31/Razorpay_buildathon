@@ -22,9 +22,9 @@ from sklearn.pipeline import Pipeline
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from ml.features.feature_definitions import FEATURE_NAMES  # noqa: E402
-from ml.training.evaluation_report import evaluate  # noqa: E402
-from ml.training.preprocessing import build_preprocessor  # noqa: E402
+from ml.features.feature_definitions import FEATURE_NAMES
+from ml.training.evaluation_report import evaluate
+from ml.training.preprocessing import build_preprocessor
 
 DATA_DIR = REPO_ROOT / "ml" / "data"
 ARTIFACTS_DIR = REPO_ROOT / "ml" / "training" / "artifacts"

@@ -89,9 +89,11 @@ proves this exact scenario), not a scripted screenshot.
 
 **4:35 — Benchmark** (`/benchmark`). Run `python simulator/benchmark/baseline_runner.py`
 beforehand (~11 seconds against the full 7,500-row held-out test set). Show the 4-baseline
-comparison and the honest framing: RecoveryOS doesn't win on raw recovered revenue, it wins on
-precision, Net Recovery Value, unnecessary-action rate, and revenue per intervention. Mention
-the 5th, AI-inclusive arm (`docs/ai-ablation.md`) and its honest, disclosed status.
+comparison and the honest framing: RecoveryOS doesn't win on raw recovered revenue, or even on
+Net Recovery Value (that's a calibration artifact of a less-disciplined baseline, not real
+superiority — see `docs/ml-evaluation.md`) — it wins on precision, unnecessary-action rate,
+and revenue per intervention. Mention the 5th, AI-inclusive arm (`docs/ai-ablation.md`) and
+its honest, disclosed status.
 
 **4:50 — Architecture.** One slide: `Signals → Prediction → AI diagnosis → Optimization →
 Policy → Execution → Outcome Reconciliation → Audit`. "AI proposes. Optimization prioritizes.

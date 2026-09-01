@@ -5,7 +5,13 @@ creating a fresh Payment Link (verified params below) and letting Razorpay deliv
 Confirmed request/response shape (docs/razorpay-integration.md, sourced from
 POST /v1/payment_links): amount, currency, reference_id, description, customer.{name,email,
 contact}, notify.{sms,email} (Razorpay sends these itself), expire_by, callback_url,
-callback_method, notes. Response: id (`plink_...`), short_url, status.
+callback_method, notes, accept_partial. Response: id (`plink_...`), short_url, status.
+
+`accept_partial` is always sent as `false`: a recovery Payment Link exists to collect exactly
+one amount RecoveryOS already computed and put in the policy-approved recovery_action — a
+partial settlement would leave the case in an ambiguous state (not failed, not fully
+recovered) that nothing downstream is built to reconcile. See
+docs/razorpay-integration.md §4/§10.
 """
 
 import time
@@ -42,6 +48,7 @@ class PaymentLinkAdapter(PaymentLinkGateway):
             "notify": {"sms": notify_sms, "email": notify_email},
             "expire_by": int(time.time()) + expire_by_seconds,
             "notes": {"source": "recoveryos"},
+            "accept_partial": False,
         }
         customer: dict = {}
         if customer_name:

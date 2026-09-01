@@ -23,8 +23,24 @@ from app.domain.models.policy_evaluation import PolicyEvaluation
 from app.domain.models.recovery_action import RecoveryAction
 from app.domain.models.recovery_case import RecoveryCase
 from app.domain.models.recovery_opportunity import RecoveryOpportunity
+from app.integrations.gateway_interface import PaymentLinkGateway
+from app.integrations.simulator_gateway import SimulatorPaymentLinkAdapter
 
 pytestmark = pytest.mark.integration
+
+
+class _CountingPaymentLinkGateway(PaymentLinkGateway):
+    """Wraps the real (simulator) gateway and counts every call — used to prove concurrent or
+    repeated execute() calls never create more than one actual Payment Link, not just one
+    RecoveryAction row."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+        self._delegate = SimulatorPaymentLinkAdapter()
+
+    async def create_payment_link(self, **kwargs) -> dict:
+        self.call_count += 1
+        return await self._delegate.create_payment_link(**kwargs)
 
 
 async def _make_policy_approved_case(db_session) -> RecoveryCase:
@@ -104,3 +120,54 @@ async def test_two_simultaneous_execute_requests_create_exactly_one_action(clien
     await db_session.refresh(case)
     assert case.status == RecoveryCaseStatus.EXECUTING.value
     assert case.version == 1  # exactly one successful transition, not two
+
+
+@pytest.mark.asyncio
+async def test_two_simultaneous_execute_requests_create_exactly_one_payment_link(
+    client, db_session, monkeypatch
+):
+    """Same race as above, but asserts the thing that actually matters financially: exactly
+    one real Payment Link gets created at Razorpay, not just exactly one RecoveryAction row.
+    A duplicate Payment Link would mean two live links a customer could pay through for the
+    same debt."""
+    case = await _make_policy_approved_case(db_session)
+    gateway = _CountingPaymentLinkGateway()
+    monkeypatch.setattr("app.services.execution_service.get_payment_link_gateway", lambda: gateway)
+
+    responses = await asyncio.gather(
+        client.post(f"/api/recovery-cases/{case.id}/execute", json={"consent_recorded": False}),
+        client.post(f"/api/recovery-cases/{case.id}/execute", json={"consent_recorded": False}),
+        return_exceptions=True,
+    )
+
+    for response in responses:
+        assert not isinstance(response, Exception), f"a concurrent execute() request raised: {response}"
+        assert response.status_code in (200, 409), response.text
+
+    assert gateway.call_count == 1, f"expected exactly one Payment Link created, got {gateway.call_count}"
+
+
+@pytest.mark.asyncio
+async def test_re_executing_an_already_executing_case_creates_no_second_payment_link(
+    client, db_session, monkeypatch
+):
+    """Sequential (not racing) re-invocation: once a case has moved to EXECUTING, calling
+    /execute again must be rejected outright — never dispatch a second Payment Link for the
+    same case."""
+    case = await _make_policy_approved_case(db_session)
+    gateway = _CountingPaymentLinkGateway()
+    monkeypatch.setattr("app.services.execution_service.get_payment_link_gateway", lambda: gateway)
+
+    first = await client.post(f"/api/recovery-cases/{case.id}/execute", json={"consent_recorded": False})
+    assert first.status_code == 200
+    assert gateway.call_count == 1
+
+    second = await client.post(f"/api/recovery-cases/{case.id}/execute", json={"consent_recorded": False})
+    assert second.status_code == 409
+    assert second.json()["code"] == "CASE_NOT_READY_FOR_EXECUTION"
+    assert gateway.call_count == 1  # unchanged — no second Payment Link
+
+    actions = (
+        await db_session.execute(select(RecoveryAction).where(RecoveryAction.recovery_case_id == case.id))
+    ).scalars().all()
+    assert len(actions) == 1

@@ -16,12 +16,15 @@
 | A consent-required action cannot dispatch without consent | Three independent layers: (1) `check_consent_required_but_missing` policy rule, (2) the state machine's `BEGIN_EXECUTION` + `CONSENT_REQUIRED` guard, (3) `hinglish_voice_handler.handle()`'s own hard precondition check (raises `ConsentNotRecorded`) | `test_hinglish_voice_execution_blocked_without_consent` (policy+state machine), `tests/unit/test_action_executor.py::test_hinglish_voice_refuses_to_dispatch_without_recorded_consent` (executor) |
 | A payment made through a recovery Payment Link resolves back to its originating case | `outcome_service.reconcile_outcome()` correlates a NEW `razorpay_payment_id` to its `RecoveryAction` via the Payment Link's `reference_id` (`payments.recovery_action_id`), writes `actual_recovered_amount` via an `IS NULL`-guarded conditional UPDATE (write-once), and never regresses an already-terminal case | `tests/integration/test_outcome_service.py` (7 tests), `tests/integration/test_payment_link_correlation.py` (full webhook-to-resolution path) |
 | Two concurrent `execute()` calls for the same case cannot create two actions | `recovery_actions.idempotency_key` UNIQUE constraint is the actual enforcement (the case-level optimistic lock alone is not race-safe here — see `execution_service.py`'s module docstring for why); a losing insert is caught, the session rolled back, and the case re-fetched fresh rather than an unhandled 500 | `tests/integration/test_execute_concurrency.py` — two simultaneous `POST /recovery-cases/{id}/execute` requests, asserts exactly one `RecoveryAction` row |
+| Two concurrent (or one repeated) `execute()` calls for the same case cannot create two real Payment Links | Same idempotency-key enforcement, one layer up: since only one `RecoveryAction` is ever inserted, only one call ever reaches the executor/adapter | `test_two_simultaneous_execute_requests_create_exactly_one_payment_link` (concurrent, via a call-counting gateway), `test_re_executing_an_already_executing_case_creates_no_second_payment_link` (sequential — the API's own status guard rejects a second call with 409 before it can dispatch) |
+| A recovery Payment Link cannot be partially settled | `accept_partial: false` is set explicitly on every `POST /payment_links` request, never left to Razorpay's default | `test_create_payment_link_never_accepts_partial_payment` |
+| A transient Razorpay failure (timeout, 429, or 5xx) is retried; a permanent one (4xx) is not | `RazorpayClient._request()`'s bounded exponential backoff, gated on `RETRYABLE_STATUS_CODES = {429,500,502,503,504}` plus `httpx.TimeoutException` | `test_retries_on_5xx_then_succeeds`, `test_retries_on_429_then_succeeds`, `test_exhausting_retries_on_429_raises_retryable_error`, `test_retries_on_timeout_then_succeeds`, `test_exhausting_retries_on_timeout_raises_retryable_error`, `test_does_not_retry_on_4xx` |
 
 ## Failure handling per external dependency — implemented, not just documented
 
 | Dependency | What actually happens |
 |---|---|
-| Razorpay API | `RazorpayClient._request()`: 3-attempt exponential backoff (0.5s, 1s, 2s, capped at 4s) on timeouts and 5xx/429 only — a 4xx is never retried (verified: `test_does_not_retry_on_4xx`, `test_retries_on_5xx_then_succeeds`). Exhausted retries raise `RazorpayAPIError`, caught by `execution_service._dispatch()`, which marks the action FAILED and drives the case through `EXECUTION_FAILED` → the normal retry-budget loop — never a silent re-evaluation. |
+| Razorpay API | `RazorpayClient._request()`: 3-attempt exponential backoff (0.5s, 1s, 2s, capped at 4s) on timeouts and 5xx/429 only — a 4xx is never retried. Each failure mode independently verified: `test_does_not_retry_on_4xx`, `test_retries_on_5xx_then_succeeds`, `test_retries_on_429_then_succeeds`/`test_exhausting_retries_on_429_raises_retryable_error`, `test_retries_on_timeout_then_succeeds`/`test_exhausting_retries_on_timeout_raises_retryable_error`. Exhausted retries raise `RazorpayAPIError`, caught by `execution_service._dispatch()`, which marks the action FAILED and drives the case through `EXECUTION_FAILED` → the normal retry-budget loop — never a silent re-evaluation. |
 | LLM | See docs/ai-design.md's failure-handling section — no key, malformed output, network failure, and the circuit breaker are each independently implemented and tested. |
 | ML model | `ml/inference/predictor.load_active_model()` returns `None` (not an exception) if no artifact exists; `app/agents/ml_predictor.predict()` returns `is_valid=False` in that case — the optimizer treats a missing model exactly like a missing LLM signal. Verified: `test_predict_with_missing_model_returns_invalid`. |
 | Database | `GET /api/health` runs `SELECT 1` and reports `"degraded"` (never crashes) on failure. Webhook ingestion returns a 5xx if it can't persist the event — deliberately: Razorpay's own at-least-once delivery with 24h exponential-backoff retry means never faking a 200 to a request we didn't durably record. |
@@ -29,31 +32,39 @@
 
 ## Test suite status
 
-The full suite is **113 test functions, 136 collected test cases (parametrized tests expand
-to multiple cases), 135 passing, 1 explicitly skipped, 0 failures** — verified in this
-hardening pass against a real, reachable PostgreSQL instance (a native local Postgres 17
-service, not Docker Compose — Docker's own daemon was not running in this environment; see
+The full suite is **120 test functions, 143 collected test cases (parametrized tests expand
+to multiple cases), all 143 passing, 0 skipped, 0 failures** — verified in the final
+submission pass against a real, reachable PostgreSQL instance (a native local Postgres
+service, not Docker Compose — this machine's Docker Desktop has no WSL2 backend; see
 `docs/limitations.md`), so every DB-gated test genuinely ran rather than self-skipping.
 
 Tests that need a live database (`tests/integration/test_db_connectivity.py`,
 `test_webhook_ingestion.py`, `test_outcome_service.py`, `test_payment_link_correlation.py`,
-`test_execute_concurrency.py`, `test_webhook_ordering.py`, `test_database_unavailable.py`,
-`tests/unit/test_idempotency.py`) are written to self-skip with an actionable message —
-`docker compose up -d postgres && alembic upgrade head` — in an environment where no
-database is reachable at all, rather than being faked as passing or silently deleted; that
-path just wasn't exercised in this pass since a database *was* reachable. The single
-remaining skip is `tests/integration/test_pipeline_smoke.py`, marked `@pytest.mark.skip`
-explicitly (not DB-gated) — see that file's docstring for scope.
+`test_pipeline_smoke.py`, `test_execute_concurrency.py`, `test_webhook_ordering.py`,
+`test_database_unavailable.py`, `tests/unit/test_idempotency.py`) are written to self-skip with an actionable message — `docker compose up -d postgres &&
+alembic upgrade head` — in an environment where no database is reachable at all, rather than
+being faked as passing or silently deleted; that path just wasn't exercised in this pass since
+a database *was* reachable. There are no remaining skips: the one that used to exist
+(`test_pipeline_smoke.py`, previously `@pytest.mark.skip` pending later phases) is now a real,
+passing, unmocked-below-the-ML-boundary integration test — see that file's docstring.
 
 ## Observability
 
 Structured JSON logging (`app/core/logging.py`, `python-json-logger`) throughout; every log
 call in the pipeline includes at least one of `webhook_event_id`, `payment_id`,
 `recovery_case_id`, `action`, or `correlation_id` in `extra=`. Every ledger entry
-(`audit_logs`) carries a `correlation_id` shared across every hop of one pipeline run — from
-`state_reconstruction_service.apply()`'s first `EVENT_IGNORED_STALE`/`PAYMENT_FAILED` entry
-through `ACTION_EXECUTED`/`PAYMENT_RECOVERED` — so a single case's full history is one query
-away (`GET /api/audit?entity_type=recovery_case&entity_id=...`, or by `correlation_id`).
+(`audit_logs`) carries a `correlation_id` shared across every hop **triggered by one webhook
+delivery** — `pipeline_orchestrator.handle_webhook_event()` generates one `correlation_id` per
+call and threads it through state reconstruction, revenue signal detection, case creation,
+analysis, policy, and execution. A full case lifecycle spans at least two webhook deliveries
+(the original `payment.failed`, and the later `payment_link.paid`/`payment.captured` that
+resolves it), so `PAYMENT_FAILED` through `ACTION_EXECUTED` share one `correlation_id` and
+`PAYMENT_RECOVERED` carries a *different* one from the reconciling webhook — each individually
+traceable, not one ID spanning the whole case. A single case's full history is still one query
+away regardless (`GET /api/audit?entity_type=recovery_case&entity_id=...`), just not filtered
+to a single `correlation_id` — verified end to end by
+`tests/integration/test_pipeline_smoke.py`, which asserts the expected audit events exist
+against both the opportunity/case and the recovery action's own ids.
 
 Latency is recorded per ML prediction (`MLPrediction.latency_ms`) and per AI call
 (`AIDiagnosisResult.latency_ms`), persisted onto `agent_decisions.latency_ms` — visible in the

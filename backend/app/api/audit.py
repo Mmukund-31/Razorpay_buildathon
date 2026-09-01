@@ -1,6 +1,6 @@
-"""GET /api/audit — a filtered, paginated read of the immutable Recovery Ledger. No write
+"""GET /api/audit — a filtered, paginated read of the append-only Recovery Ledger. No write
 path is exposed here or anywhere else — see app/repositories/audit_log_repository.py's
-docstring for the immutability guarantee this endpoint's absence of a POST/PATCH upholds.
+docstring for the append-only guarantee this endpoint's absence of a POST/PATCH upholds.
 """
 
 from datetime import datetime

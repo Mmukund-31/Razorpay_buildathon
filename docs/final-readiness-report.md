@@ -1,7 +1,75 @@
 # Final Readiness Report
 
 Written at the close of the final hardening pass, against the baseline recorded in
-`docs/pre-hardening-baseline.md`. Every number below is reproducible by the commands cited.
+`docs/pre-hardening-baseline.md`. A second, final **submission pass** followed — hardening and
+cleanup only, no rewrite — closing the remaining concrete gaps that pass's own "Known
+Limitations"/"Submission Recommendation" sections called out. That pass's changes are recorded
+first; everything below it is the original hardening pass's report, left intact as the
+historical record it is.
+
+## Final submission pass — what changed on top of the hardening pass above
+
+1. **`accept_partial: false` is now explicit on every recovery Payment Link**
+   (`payment_link_adapter.py`) — previously never set, relying on Razorpay's default. Tested
+   (`test_create_payment_link_never_accepts_partial_payment`). Closes the partial-payment
+   correlation gap the hardening pass's `docs/limitations.md` flagged as "a real gap."
+2. **The complete end-to-end flow now has a real test, not a skip.**
+   `tests/integration/test_pipeline_smoke.py::test_full_pipeline_payment_failure_to_recovery`
+   was previously the suite's one explicitly-skipped placeholder (its own docstring said it
+   becomes real "as each service stops being a stub"). Every service it named is now real, so
+   it does: it drives one `payment.failed` webhook through the real HTTP endpoint and
+   background worker — ingestion, state reconstruction, revenue signal, opportunity, case
+   creation/eligibility, ML-driven analysis (a fixed, valid ML signal is substituted for the
+   real trained model's output so the test is deterministic — everything downstream is
+   unmocked), policy approval, a real Payment Link creation (exactly once, asserted), a
+   simulated customer payment via `payment_link.paid`, outcome reconciliation, and a final
+   assertion that the `actual_recovered_amount`, the `original_payment → recovery_case →
+   recovery_action → payment_link → recovered_payment` correlation chain, and the append-only
+   audit trail are all present and correct.
+3. **New duplicate-Payment-Link tests.** The hardening pass proved concurrent `/execute`
+   requests create exactly one `RecoveryAction`; this pass adds two tests proving they also
+   create exactly one real Payment Link (`test_two_simultaneous_execute_requests_create_
+   exactly_one_payment_link`, via a call-counting gateway wrapper) and that a sequential
+   re-execute on an already-`EXECUTING` case is rejected outright, never dispatching a second
+   link (`test_re_executing_an_already_executing_case_creates_no_second_payment_link`).
+4. **New Razorpay failure-mode tests**: 429 (retried and eventually succeeds; retried and
+   eventually exhausted, both), and a network timeout (`httpx.TimeoutException`, retried and
+   eventually succeeds; retried and eventually exhausted). Previously only generic 5xx and 4xx
+   were covered.
+5. **"Immutable audit ledger" → "append-only audit ledger"** — corrected everywhere the code
+   and docs described the ledger's guarantee as `README.md`, `docs/track-alignment.md`,
+   `app/api/audit.py`, `app/domain/models/audit_log.py`,
+   `app/repositories/audit_log_repository.py`, `alembic/versions/0001_initial_schema.py`, and
+   the Audit Ledger frontend page. "Immutable" implies a guarantee this system doesn't actually
+   enforce at the database level (see `audit_log.py`'s own docstring, unchanged by this pass);
+   "append-only" is what's actually true and tested (`test_audit_log_immutability.py`: no
+   update/delete code path exists).
+6. **Dead code and stale comments removed**: `frontend/src/components/PagePlaceholder.tsx`
+   (fully unreferenced, confirmed by grep) deleted; two stale `TODO(phase-N)` docstring lines
+   in `ml/features/feature_definitions.py` (the work they described was already done) removed.
+7. **The 13 previously-untouched `ruff` findings in `ml/`/`scripts`/`simulator/` are now
+   fixed** (unused `noqa: E402` directives, an unsorted import block, two `zip()` →
+   `itertools.pairwise()` refactors — all style, no logic changes), along with the alembic
+   migration's 11 `E501`s. `ruff check .` is now clean across the entire repository, not just
+   `backend/app`/`backend/tests`.
+8. **`react-router-dom` upgrade evaluated and deliberately not taken.** Already pinned at the
+   latest v6 (`^6.28.0`); the only newer release is `7.18.3`, a breaking major requiring a
+   data-router migration — genuinely not "safely possible" in a hardening-not-rewrite pass.
+   Practical exposure of the two open `npm audit` advisories re-confirmed as low: exactly two
+   `<Link to=>` usages in the whole frontend, both interpolating server-generated UUIDs, never
+   user input; zero `useNavigate()` calls anywhere.
+9. **Docker Compose**: Docker Desktop was actually started in this pass (it wasn't reachable in
+   the prior one). Root cause of why `docker compose up` still can't be exercised here is now
+   precisely known: this machine's Docker Desktop has no WSL2 backend (`wsl --status` reports
+   WSL isn't installed) — a machine-setup gap, not a project defect. `docker compose config`
+   continues to validate the compose file's syntax cleanly.
+10. **Live-credential attempts, both honestly inconclusive.** Real credentials became available
+    mid-pass for both external integrations this project had left "unverified" — see the
+    dedicated Razorpay and AI sections below for exactly what was attempted and why neither
+    produced a live success to report.
+11. **Test suite grew and the skip count dropped to zero**: **120 test functions, 143 collected
+    test cases, all 143 passing, 0 skipped, 0 failures** (previously 113/136/135/1-skip) — see
+    Tests, below, superseding the hardening pass's numbers throughout this document.
 
 ## Executive Summary
 
@@ -75,18 +143,22 @@ no new infrastructure was added.
 
 ## Tests
 
-- **113 test functions, 136 collected test cases** (parametrization expands some), **135
-  passing, 1 explicitly skipped, 0 failures** — verified against a real, reachable PostgreSQL
-  instance (native local Postgres 17), stable across repeated runs.
-- **28 new test functions** added this pass across 10 new files: payment-link correlation
-  (unit + integration, 9 tests), execute-concurrency (1), webhook duplicate/out-of-order (2),
-  database-unavailable (1), ablation metrics (10), mocked AI-ablation benchmark runner (5).
-- **Frontend**: `npm run build` clean, `npm run lint` 0 errors (2 pre-existing stylistic
-  warnings), 6/6 Playwright e2e tests pass.
-- `mypy app`: clean (102 source files). `ruff check app tests`: clean. 13 pre-existing ruff
-  findings remain in `ml/`/`scripts/`/`simulator/` files this pass didn't otherwise touch
-  (import ordering, line length) — cosmetic, not fixed, to avoid touching files with no other
-  reason to change this late in the process.
+- **120 test functions, 143 collected test cases** (parametrization expands some), **all 143
+  passing, 0 skipped, 0 failures** — verified against a real, reachable PostgreSQL instance
+  (native local Postgres), stable across repeated runs. The one previously-skipped test
+  (the full-pipeline smoke test) is now real, not skipped — see item 2 above.
+- **35 new test functions** total across the hardening pass (28) and the final submission
+  pass (7: `accept_partial` never-set, 429 retried-then-succeeds, 429 exhausted, timeout
+  retried-then-succeeds, timeout exhausted, duplicate-Payment-Link-under-concurrency,
+  re-execute-already-executing-rejected — plus the full pipeline test converted from a skip to
+  a real pass, not counted twice).
+- **Frontend**: `npm run build` clean (includes `tsc -b` type-checking), `npm run lint` 0
+  errors (2 pre-existing stylistic `react-refresh` warnings, out of scope — not Ruff), 6/6
+  Playwright e2e tests pass.
+- `mypy app`: clean (102 source files). `ruff check .` is now clean across the **entire
+  repository** — `backend/app`, `backend/tests`, `backend/alembic`, `ml/`, `scripts/`, and
+  `simulator/` — closing the 11 (alembic) + 13 (`ml`/`scripts`/`simulator`) findings the prior
+  pass had deliberately left untouched.
 
 ## Benchmark
 
@@ -100,67 +172,100 @@ Net Recovery Value is additive, not a replacement metric):
 | ML_ONLY | ₹53.62L | ₹95.17L | 31.3% |
 | RECOVERYOS_FULL | ₹47.96L | ₹81.89L | 28.2% |
 
-RecoveryOS still doesn't win on gross revenue — the honest finding this project has reported
-throughout. See `docs/ml-evaluation.md` for the full table and the calibration-gap caveat
-(ML_ONLY's Net Recovery Value looks far higher than its realized revenue precisely because
-its probabilities are less well-calibrated, ECE 0.258 vs RECOVERYOS_FULL's 0.290 — a real,
-close-but-notably-different comparison, not a clean win either way, reported as-is).
+RecoveryOS still doesn't win on gross revenue, and — read carefully — it doesn't win on Net
+Recovery Value either, though it's easy to misread the table as if it does. See
+`docs/ml-evaluation.md` for the full table and the calibration-gap caveat (ML_ONLY's Net
+Recovery Value looks far higher than its realized revenue precisely because its probabilities
+are less well-calibrated, ECE 0.258 vs RECOVERYOS_FULL's 0.290 — a real, close-but-notably-
+different comparison, not a clean win either way, reported as-is). The README's summary line
+was corrected this pass — it previously claimed "RecoveryOS wins on precision and Net Recovery
+Value," which overstated the NRV comparison; the honest framing is precision, unnecessary-
+action rate, and revenue per intervention.
 
-The `RECOVERYOS_AI` arm was not run against a live LLM in this pass (no `LLM_API_KEY`
-configured, and per explicit scope decision no live Anthropic spend) — see `docs/ai-ablation.md`
-for what was verified instead (a mocked test proving the nudge mechanism works correctly) and
-exactly how to produce real numbers.
+**The `RECOVERYOS_AI` arm was attempted against a live LLM this pass** — a real, valid
+Anthropic API key was available (`LLM_API_KEY`, format-verified as a genuine `sk-ant-...` key)
+and `--run-ai-ablation --ai-sample-size 20` was actually run against it. The key authenticates
+successfully, but the Anthropic account has no available credit balance: every call returned a
+real `400 invalid_request_error` ("Your credit balance is too low to access the Anthropic
+API"), not a "no key configured" short-circuit. The result is still `llm_failure_rate=1.0` and
+every other metric identical to `RECOVERYOS_FULL_SUBSET` — the same shape as the "no key"
+result the prior pass reported — but it's now evidence from a genuine attempted call, not an
+untried code path. See `docs/ai-ablation.md`.
 
 ## Razorpay
 
-**Integration status**: real Payment Links/Subscriptions API adapters, bounded retry/backoff,
-webhook signature verification, event-ID dedup, and (new this pass) payment-link recovery
-correlation — all implemented and tested against mocks (`respx`) and the real webhook
-ingestion path via the simulator's in-process ASGI posts. **Test Mode status**: not exercised
-against a live Razorpay account in this pass, per explicit scope decision (see
-`docs/limitations.md`). The correlation mechanism's key fact (`payment_link.paid`'s payload
-shape) was independently verified against live `razorpay.com/docs` before implementation.
+**Integration status**: real Payment Links/Subscriptions API adapters, bounded retry/backoff
+(now covering timeout and 429 independently, not just generic 5xx), webhook signature
+verification, event-ID dedup, payment-link recovery correlation, and (new this pass)
+`accept_partial: false` on every recovery Payment Link — all implemented and tested against
+mocks (`respx`) and the real webhook ingestion path via the simulator's in-process ASGI posts.
+**Test Mode status**: two genuine attempts were made this pass to create a real Payment Link
+against a live Test Mode account, using `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` supplied for
+that purpose — both returned `401 Authentication failed` from Razorpay. The loaded credential
+values were independently confirmed clean (correct lengths, no whitespace corruption); the
+key/secret pair itself does not authenticate. Reported honestly as unverified — see
+`docs/limitations.md` and `docs/razorpay-integration.md` §9. The correlation mechanism's key
+fact (`payment_link.paid`'s payload shape) was independently verified against live
+`razorpay.com/docs` before implementation.
 
 ## AI
 
 Real Anthropic SDK integration, zero tool access, strict Pydantic validation, circuit
-breaker, and prompt-injection defenses were already solid pre-pass. This pass added the
-ability to *measure* the AI's marginal contribution in isolation (`docs/ai-ablation.md`) —
-not executed live, but the mechanism is real, tested, and ready.
+breaker, and prompt-injection defenses were already solid pre-pass. The hardening pass added
+the ability to *measure* the AI's marginal contribution in isolation (`docs/ai-ablation.md`);
+this pass actually exercised that measurement against a live model (see Benchmark, above) —
+the mechanism is real, tested, and was genuinely run, even though a billing constraint outside
+this codebase's control kept it from producing a valid live diagnosis.
 
 ## Security
 
-No secrets committed (`.env` gitignored, never tracked; `.env.example` placeholder-only).
-`npm audit` found one real, moderate `react-router-dom` advisory (open-redirect via backslash
-in `<Link>`) — evaluated this app's actual exposure (every `Link to=` target is a
-server-generated UUID, never user-controlled input) and documented rather than force-fixing a
-major-version migration this close to submission; a production pass should still take the
-upgrade. `anthropic` dependency floor corrected to match what's actually tested. No other
-findings.
+No secrets committed (`.env` gitignored, never tracked; `.env.example` placeholder-only —
+re-verified at the end of this pass with a repository-wide grep for credential patterns and
+`git ls-files`). `npm audit` still finds the same real, moderate `react-router-dom` advisory
+(open-redirect via backslash in `<Link>`, plus an SSR-hydration advisory that doesn't apply to
+this client-side-only SPA) — re-evaluated this pass: exactly two `Link to=` usages in the
+entire frontend, both interpolating server-generated UUIDs, zero `useNavigate()` calls
+anywhere. The only fix available is the `react-router-dom` v7 major (a breaking data-router
+migration), which this pass deliberately did not take — genuinely not "safely possible"
+without becoming a rewrite this close to submission. `anthropic` dependency floor corrected to
+match what's actually tested. No other findings.
 
 ## Known Limitations
 
 See `docs/limitations.md` in full. Headline items: synthetic (not real-world) benchmark data;
-live Razorpay Test Mode and live AI-ablation execution both deferred per explicit scope
-decision this pass; Docker Compose not exercised (the Docker daemon wasn't running in this
-environment — verified via `docker compose config` for syntax validity only); subscription
-recovery remains a partial extension, honestly scoped as such before this pass and left that
-way; Hinglish voice remains a clearly-labeled simulation.
+live Razorpay Test Mode attempted twice this pass with real credentials and still unverified
+(401, credentials don't authenticate — see Razorpay, above); live AI-ablation attempted this
+pass with a real, valid Anthropic key and still produced no valid diagnosis (the account has
+no credit balance — see AI, above); Docker Compose not exercised (root cause now precise: this
+machine's Docker Desktop has no WSL2 backend, confirmed via `wsl --status` — verified via
+`docker compose config` for syntax validity only); subscription recovery remains a partial
+extension, honestly scoped as such from the start and left that way; Hinglish voice remains a
+clearly-labeled simulation.
 
 ## Submission Recommendation
 
-**READY WITH CAVEATS.**
+**SUBMISSION READY**, with two specific, disclosed, non-blocking external-verification gaps.
 
-The P0 items — outcome reconciliation, payment-link correlation, idempotent double-webhook
-handling, duplicate/out-of-order webhook correctness, and the newly-found concurrent-execution
-race — are implemented, tested, and independently verified against a real database in this
-session, not merely claimed. The AI ablation and Net Recovery Value work (P1) is real and
-tested. The caveats are specific and disclosed, not hidden: live Razorpay Test Mode and live
-AI-ablation execution were deliberately not performed (a scope decision, reversible by
-configuring credentials and re-running the documented commands), and Docker Compose itself
-was not exercised end-to-end (the underlying migrations/pipeline/benchmark were all verified
-against a real Postgres instance by other means). Before treating this as unconditionally
-submission-ready, whoever finalizes the submission should, if time allows: run one genuine
-Razorpay Test Mode payment-link recovery end-to-end, and run `--run-ai-ablation` with a real
-`LLM_API_KEY` to replace the honest "not executed live" placeholder in `docs/ai-ablation.md`
-with real numbers.
+Every safety invariant the product spec cares about is implemented, tested, and independently
+verified against a real database in this session: no unsafe AI action can reach the executor
+(the policy engine is the sole approval gate; `ActionExecutor` is the only Razorpay-adapter
+importer), no payment can be recovered twice (write-once `actual_recovered_amount`,
+terminal-case guard), no duplicate webhook creates duplicate business effects (`UNIQUE`
+`razorpay_event_id` + idempotent ack), no stale event regresses state (watermark-guarded
+conditional transitions), no duplicate Payment Link can be created for one case (proven under
+both true concurrency and sequential re-execution), a Payment Link can never be partially
+settled (`accept_partial: false`, explicit), every financial action is policy-approved and
+idempotent (`policy_evaluation_id` NOT NULL FK, `idempotency_key` UNIQUE), and the complete
+failed-payment → Payment Link → payment → webhook → reconciliation → actual recovered revenue
+→ audit-ledger chain is proven by one real, unmocked-below-the-ML-boundary integration test,
+not just individually-tested pieces. All 143 tests pass, `ruff`/`mypy`/frontend build+lint all
+clean, no secrets are committed, and documentation matches the code (this pass's whole point).
+
+The two caveats are specific and disclosed, not hidden: **live Razorpay Test Mode** and **live
+AI-ablation execution** were both genuinely attempted this pass with real credentials supplied
+for that purpose, and both remain unverified for reasons outside this codebase's control
+(a credential pair that doesn't authenticate; an Anthropic account with no credit balance) —
+not scope decisions this time, but real attempts with real, disclosed outcomes. Whoever
+finishes the submission can re-attempt either by supplying working credentials and re-running
+the documented commands (`docs/razorpay-integration.md` §9, `docs/ai-ablation.md`); nothing
+else in the codebase needs to change to make either one work.
