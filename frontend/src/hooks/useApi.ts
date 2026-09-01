@@ -40,7 +40,6 @@ export function useApi<T>(path: string, intervalMs = 5000): UseApiResult<T> {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, tick]);
 
   useEffect(() => {

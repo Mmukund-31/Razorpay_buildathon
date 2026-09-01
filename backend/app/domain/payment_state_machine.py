@@ -14,6 +14,15 @@ Verified Razorpay quirks this table encodes (see docs/razorpay-integration.md):
   * A `payment.failed` can be followed later by `payment.captured` for the *same*
     `payment_id` (UPI: customer corrects a wrong PIN and retries inside their UPI app).
   * Webhook delivery order is not guaranteed — hence the ordering guard below.
+  * `payment_link.paid` fires when a customer completes payment through a Payment Link —
+    verified against razorpay.com/docs to always carry `payload.payment.entity` alongside
+    `payload.payment_link.entity` in the same delivery. It is treated identically to
+    `payment.captured` here: RecoveryOS's recovery Payment Links (SMART_RETRY/DELAYED_RETRY/
+    CUSTOMER_ACTION_REQUEST) are the primary real-world recovery mechanism (there is no
+    "retry a failed payment" API), so this is the event that captures a brand-new
+    `razorpay_payment_id` most recoveries actually resolve through. A plain `payment.captured`
+    may also arrive for the same payment_id (Razorpay is not documented to guarantee only
+    one of the two) — the terminal-state guard above makes a second arrival a safe no-op.
 """
 
 from dataclasses import dataclass
@@ -36,6 +45,12 @@ _TRANSITIONS: dict[tuple[PaymentStatus, str], PaymentStatus] = {
     (PaymentStatus.AUTHORIZED, "order.paid"): PaymentStatus.CAPTURED,
     (PaymentStatus.FAILED, "payment.captured"): PaymentStatus.CAPTURED,  # verified UPI quirk
     (PaymentStatus.CAPTURED, "payment.refunded"): PaymentStatus.REFUNDED,
+    # payment_link.paid: a brand-new payment (created via a recovery Payment Link) going
+    # straight to CAPTURED — this payment_id has never been seen before, so it always starts
+    # from CREATED (state_reconstruction_service creates the row with status=CREATED on
+    # first sight of any event for an unknown razorpay_payment_id).
+    (PaymentStatus.CREATED, "payment_link.paid"): PaymentStatus.CAPTURED,
+    (PaymentStatus.AUTHORIZED, "payment_link.paid"): PaymentStatus.CAPTURED,
 }
 
 _RECOGNIZED_EVENT_TYPES = frozenset(event_type for _, event_type in _TRANSITIONS)

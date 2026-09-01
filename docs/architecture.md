@@ -92,8 +92,13 @@ actually resolves for the 5 real recovery-attempt actions (SMART_RETRY, DELAYED_
 CUSTOMER_NOTIFICATION, CUSTOMER_ACTION_REQUEST, HINGLISH_VOICE): a successfully-dispatched
 Payment Link isn't the same moment as the customer paying it, so dispatch success alone
 deliberately does **not** move those 5 actions to `SUCCEEDED` — the case stays `EXECUTING`
-until a later `payment.captured` webhook resolves it via this same guard
-(`app/services/pipeline_orchestrator.py::_resolve_if_captured`). `ESCALATION` and `NO_ACTION`
+until a later `payment.captured`/`payment_link.paid` webhook resolves it via this same guard.
+`pipeline_orchestrator.py::_resolve_if_captured` delegates to `outcome_service.
+reconcile_outcome()` (the Outcome Engine, row above), which does the real work: the captured
+payment usually has a DIFFERENT `razorpay_payment_id` than the case's original failed one
+(there is no "retry a failed payment" API — see docs/razorpay-integration.md §4/§10), so
+resolving it means correlating via the Payment Link's `reference_id`, not just matching on
+`payment_id`. `ESCALATION` and `NO_ACTION`
 are the two exceptions where dispatching **is** the whole outcome, so they resolve immediately
 via their own dedicated triggers (`ESCALATION_COMPLETE` → `ESCALATED`, `NO_ACTION_COMPLETE` →
 `ABSTAINED`).

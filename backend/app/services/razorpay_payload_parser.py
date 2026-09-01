@@ -13,6 +13,22 @@ payload. Pure, no I/O — the verified real payload shape (docs/razorpay-integra
 Simulator-generated payloads (simulator/generators/event_generator.py) match this exact
 shape so this parser — and everything downstream of it — cannot tell the difference, per
 ADR-004 ("the simulator drives the real pipeline, never a parallel fake one").
+
+A `payment_link.paid` event (fired when a customer pays through a RecoveryOS-created
+recovery Payment Link — verified against razorpay.com/docs, see
+docs/razorpay-integration.md's payment-link correlation section) carries the SAME
+`payload.payment.entity` shape as `payment.captured`, plus a sibling `payload.payment_link`
+entity in the same delivery:
+
+    {"event": "payment_link.paid",
+     "payload": {"payment_link": {"entity": {"id": "plink_...", "reference_id": "recoveryos-<uuid>",
+                                               "notes": {...}, ...}},
+                 "payment": {"entity": {...same shape as above...}}}}
+
+This is the mechanism `outcome_service.py` uses to correlate a NEW payment (made via a
+recovery Payment Link) back to the RecoveryAction that created the link — the link's
+`reference_id` is set by RecoveryOS itself (app/domain/recovery_action_reference.py) and
+echoed back unchanged.
 """
 
 from dataclasses import dataclass
@@ -33,6 +49,9 @@ class ParsedPaymentEvent:
     error_source: str | None
     error_step: str | None
     error_reason: str | None
+    notes: dict | None
+    payment_link_id: str | None
+    payment_link_reference_id: str | None
 
 
 def parse_payment_entity(payload: dict) -> ParsedPaymentEvent | None:
@@ -46,6 +65,8 @@ def parse_payment_entity(payload: dict) -> ParsedPaymentEvent | None:
 
     notes = entity.get("notes")
     customer_name = notes.get("customer_name") if isinstance(notes, dict) else None
+
+    link_entity = payload.get("payload", {}).get("payment_link", {}).get("entity")
 
     return ParsedPaymentEvent(
         razorpay_payment_id=entity["id"],
@@ -61,6 +82,9 @@ def parse_payment_entity(payload: dict) -> ParsedPaymentEvent | None:
         error_source=entity.get("error_source"),
         error_step=entity.get("error_step"),
         error_reason=entity.get("error_reason"),
+        notes=notes if isinstance(notes, dict) else None,
+        payment_link_id=link_entity.get("id") if link_entity else None,
+        payment_link_reference_id=link_entity.get("reference_id") if link_entity else None,
     )
 
 

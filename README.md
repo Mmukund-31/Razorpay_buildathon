@@ -10,19 +10,26 @@ Built for the **Razorpay AI Buildathon — Track 03: AI Revenue Recovery**.
 
 ## Status
 
-**Core pipeline, ML, policy, execution, API, frontend, and benchmark are real and working.**
-End to end: webhook ingestion → state reconstruction → revenue signal detection → ML scoring
-(a real trained LightGBM model) → AI diagnosis (real Anthropic integration, degrades
-gracefully without a key) → optimizer → policy engine (8 real rules) → executor (real
-Razorpay Payment Link adapter, falls back to a clearly-labeled simulator without credentials)
-→ audit ledger, all wired together and covered by 77 passing tests (0 failures; 6 tests that
-need a live database self-skip in this environment rather than being faked — see Quickstart).
-A 4-baseline benchmark has actually been run against 7,500 held-out synthetic rows; the
-honest results (RecoveryOS wins on precision/efficiency, not raw revenue) are in
-[`docs/ml-evaluation.md`](docs/ml-evaluation.md). The React frontend (7 pages) builds cleanly
-against this API. Docker/Postgres were not available in the development environment this was
-built in, so the full DB-backed pipeline and the Docker deployment are written and
-type-checked but not independently exercised end-to-end here — see
+**Core pipeline, ML, policy, execution, API, frontend, and benchmark are real and working —
+including the full outcome-reconciliation loop for payment-link-driven recovery**, closed in
+the final hardening pass (see `docs/final-readiness-report.md`). End to end: webhook
+ingestion → state reconstruction → revenue signal detection → ML scoring (a real trained
+LightGBM model) → AI diagnosis (real Anthropic integration, degrades gracefully without a
+key) → optimizer → policy engine (8 real rules) → executor (real Razorpay Payment Link
+adapter, falls back to a clearly-labeled simulator without credentials) → **outcome
+reconciliation** (correlates a NEW payment made through a recovery Payment Link back to its
+originating case, writes the actual recovered amount exactly once, idempotently) → audit
+ledger, all wired together and covered by **113 test functions / 136 collected test cases,
+135 passing, 1 explicitly skipped** (0 failures — see Quickstart). A 4-baseline benchmark
+(plus an optional 5th AI-inclusive ablation arm, `--run-ai-ablation`) has actually been run
+against 7,500 held-out synthetic rows; the honest results (RecoveryOS wins on precision and
+Net Recovery Value, not raw gross revenue) are in
+[`docs/ml-evaluation.md`](docs/ml-evaluation.md) and [`docs/ai-ablation.md`](docs/ai-ablation.md).
+The React frontend (7 pages) builds cleanly against this API. A native local PostgreSQL
+instance was reachable in this hardening pass, so the full suite — including every
+integration test — has genuinely run against a live database, not just self-skipped; Docker
+Compose itself was not exercised in this pass (the Docker daemon wasn't running in this
+environment) — see [`docs/limitations.md`](docs/limitations.md) and
 [`docs/track-alignment.md`](docs/track-alignment.md) for the precise, honest boundary of
 what's verified where.
 
@@ -87,8 +94,15 @@ pytest
 # frontend, in another shell:
 cd ../frontend && npm install && npm run dev   # http://localhost:5173, proxies /api to :8000
 
+# seed a few demo cases for the Command Center/Recovery Queue (optional):
+python ../scripts/seed_db.py
+# or a bigger failure storm / one named failure-injection scenario:
+python ../scripts/run_simulator.py failure-storm --count 100
+python ../scripts/run_simulator.py scenario duplicate_webhook
+
 # benchmark, once a model is trained (~11s against the full held-out test set):
 python simulator/benchmark/baseline_runner.py
+# add --run-ai-ablation for the 5th, AI-inclusive arm on a bounded sample (needs LLM_API_KEY)
 ```
 
 `GET http://localhost:8000/api/health` should return `{"status": "ok", "db": "ok", ...}`.
@@ -98,10 +112,11 @@ python simulator/benchmark/baseline_runner.py
 > verification, app wiring) run with no external dependencies:
 > `cd backend && pytest -m "unit or smoke"`. Integration tests that need a real database skip
 > themselves with a clear message rather than silently pretending to pass — see
-> [`backend/tests/conftest.py`](backend/tests/conftest.py). The full 89-test suite (including
-> every integration test) has actually been run against a live PostgreSQL instance and passes
-> — see [`docs/deployment.md`](docs/deployment.md) for local-Postgres setup notes and
-> [`docs/reliability.md`](docs/reliability.md) for what each test proves.
+> [`backend/tests/conftest.py`](backend/tests/conftest.py). The full suite (113 test
+> functions, 136 collected test cases including every integration test) has actually been run
+> against a live PostgreSQL instance and passes — see [`docs/deployment.md`](docs/deployment.md)
+> for local-Postgres setup notes and [`docs/reliability.md`](docs/reliability.md) for what
+> each test proves.
 
 For Docker Compose (full local stack: Postgres + backend + frontend in one command) and
 deploying to Render, see [`docs/deployment.md`](docs/deployment.md) — includes a
@@ -126,8 +141,12 @@ live Razorpay documentation, not assumed.
 | [`docs/decisions.md`](docs/decisions.md) | ADRs — why FastAPI/Postgres/no-Redis/no-microservices/etc. |
 | [`docs/ai-design.md`](docs/ai-design.md) | LLM role, prompt architecture, validation, failure handling |
 | [`docs/ml-evaluation.md`](docs/ml-evaluation.md) | Dataset, features, leakage prevention, real trained-model metrics, real 4-baseline benchmark results |
+| [`docs/ai-ablation.md`](docs/ai-ablation.md) | The 5th, AI-inclusive benchmark arm — setup, metrics, honest results |
 | [`docs/reliability.md`](docs/reliability.md) | Every safety invariant with its enforcement mechanism and the test proving it |
 | [`docs/security.md`](docs/security.md) | Webhook security, secrets, prompt-injection defense |
+| [`docs/limitations.md`](docs/limitations.md) | What's synthetic, simulated, or out of scope — stated plainly |
+| [`docs/interview-defense.md`](docs/interview-defense.md) | Answers to the hard questions a reviewer would actually ask |
+| [`docs/final-readiness-report.md`](docs/final-readiness-report.md) | What changed in the final hardening pass, and the submission-readiness call |
 | [`docs/demo-script.md`](docs/demo-script.md) | 5-minute live demo script |
 
 ## License

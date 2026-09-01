@@ -4,7 +4,16 @@ FAILED). The only service allowed to construct an `ActionExecutor` and drive a
 
 Idempotency: `idempotency_key = f"{case_id}:{action_type}:{attempt_count}"` is looked up
 BEFORE any external call — a duplicate invocation (e.g. a re-delivered webhook re-triggering
-evaluation) finds the existing row and returns it untouched rather than re-executing.
+evaluation) finds the existing row and returns it untouched rather than re-executing. That
+pre-check alone is NOT race-safe against two truly concurrent `execute()` calls, though: both
+can pass it before either has inserted a row (`recovery_cases.version`'s optimistic lock only
+protects the case's own status transition, and a caller that loses that race still ends up
+observing the WINNER's now-`EXECUTING`/`SCHEDULED` status once it retries — see
+recovery_case_service.transition()'s retry-with-refresh — so both callers legitimately reach
+the insert). The `idempotency_key` UNIQUE constraint is therefore the actual enforcement, per
+docs/reliability.md's "use database-level constraints, not just application-level checks";
+`_insert_action_or_recover_from_race()` below is what makes losing that DB-level race a safe,
+idempotent no-op instead of an unhandled 500.
 
 Policy-bypass prevention: every `RecoveryAction` this service creates carries a
 `policy_evaluation_id` pointing at an `allowed=true` row this same call fetched — there is no
@@ -21,6 +30,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -165,6 +175,24 @@ async def _dispatch(
     return case
 
 
+async def _insert_action_or_recover_from_race(
+    session: AsyncSession, action_repo: RecoveryActionRepository, recovery_action: RecoveryAction
+) -> RecoveryAction | None:
+    """Inserts `recovery_action`, or — if a concurrent `execute()` call for the identical
+    `idempotency_key` won the insert race first (see module docstring) — rolls back this
+    session's failed attempt and returns None so the caller treats it exactly like the
+    pre-insert `get_by_idempotency_key` hit: a safe, idempotent no-op, not a 500."""
+    try:
+        return await action_repo.add(recovery_action)
+    except IntegrityError:
+        await session.rollback()
+        logger.info(
+            "lost the idempotency-key insert race to a concurrent execute() call — idempotent no-op",
+            extra={"key": recovery_action.idempotency_key},
+        )
+        return None
+
+
 async def execute(
     session: AsyncSession,
     case: RecoveryCase,
@@ -198,7 +226,9 @@ async def execute(
         case = await recovery_case_service.transition(session, case, CaseTrigger.SCHEDULE, correlation_id)
         if case.status != RecoveryCaseStatus.SCHEDULED.value:
             return case
-        await action_repo.add(
+        inserted = await _insert_action_or_recover_from_race(
+            session,
+            action_repo,
             RecoveryAction(
                 recovery_case_id=case.id,
                 action_type=action.value,
@@ -208,9 +238,12 @@ async def execute(
                 consent_recorded=consent_recorded,
                 consent_recorded_at=datetime.now(UTC) if consent_recorded else None,
                 scheduled_for=datetime.now(UTC) + DELAYED_RETRY_DELAY,
-            )
+            ),
         )
-        await session.flush()
+        if inserted is not None:
+            await session.flush()
+        else:
+            await session.refresh(case)
         return case
 
     if case.status == RecoveryCaseStatus.POLICY_APPROVED.value:
@@ -225,7 +258,9 @@ async def execute(
     if case.status != RecoveryCaseStatus.EXECUTING.value:
         return case  # blocked (consent required, lost a race, etc.) — already logged by transition()
 
-    recovery_action = await action_repo.add(
+    recovery_action = await _insert_action_or_recover_from_race(
+        session,
+        action_repo,
         RecoveryAction(
             recovery_case_id=case.id,
             action_type=action.value,
@@ -234,8 +269,14 @@ async def execute(
             policy_evaluation_id=policy_evaluation.id,
             consent_recorded=consent_recorded,
             consent_recorded_at=datetime.now(UTC) if consent_recorded else None,
-        )
+        ),
     )
+    if recovery_action is None:
+        # A concurrent execute() call already created (and is dispatching, or has finished
+        # dispatching) the real action — re-fetch the case fresh rather than dispatching a
+        # second time against this session's now-stale in-memory view.
+        await session.refresh(case)
+        return case
     await session.flush()
     return await _dispatch(session, case, recovery_action, action, correlation_id)
 

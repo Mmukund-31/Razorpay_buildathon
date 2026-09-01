@@ -35,6 +35,24 @@ class RecoveryCaseRepository(BaseRepository[RecoveryCase]):
         result = cast(CursorResult, await self.session.execute(stmt))
         return result.rowcount > 0
 
+    async def set_actual_recovered_amount(
+        self, *, case_id: uuid.UUID, amount: int, resolved_payment_id: uuid.UUID
+    ) -> bool:
+        """Conditional UPDATE guarded by `actual_recovered_amount IS NULL` — the durable half
+        of "write once, never additive/duplicated" for the amount actually recovered.
+        Deliberately separate from `apply_state_transition()` (version-guarded, status-only):
+        the amount write and the status transition are two independent idempotency concerns,
+        and this one must survive even if the status transition above it loses its optimistic
+        lock race on a given attempt (a retry hits the same `IS NULL` guard and is a no-op).
+        Returns False if another worker already wrote it — a safe no-op, not an error."""
+        stmt = (
+            update(RecoveryCase)
+            .where(RecoveryCase.id == case_id, RecoveryCase.actual_recovered_amount.is_(None))
+            .values(actual_recovered_amount=amount, resolved_payment_id=resolved_payment_id)
+        )
+        result = cast(CursorResult, await self.session.execute(stmt))
+        return result.rowcount > 0
+
     async def get_live_case_for_payment(self, payment_id: uuid.UUID) -> RecoveryCase | None:
         """At most one row can ever match — enforced by the partial unique index on
         `recovery_cases(payment_id) WHERE status NOT IN (...)`, not just this query's LIMIT."""

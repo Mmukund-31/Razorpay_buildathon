@@ -123,11 +123,42 @@ from a real API call, or that a real API call's result was fabricated. Where a s
 number, it traces back to either a real API response or a clearly-labeled simulated one — see
 `docs/decisions.md`'s "no fabricated metrics" rule.
 
-## 9. What's real vs stub as of Phase 1
+## 9. Current implementation status (superseding the original Phase 1 draft of this section)
 
-Phase 1 has no live Razorpay integration yet — that lands in Phase 10. What exists now:
-`webhook_verifier.py` (real signature verification, unit-tested), the webhook ingestion
-endpoint (real signature check + idempotent persistence), and the adapter/executor
-*interfaces* this document's action-mapping table describes, with bodies that raise
-`NotImplementedError` and a `TODO(phase-10)` marker rather than silently doing nothing or
-faking a response.
+Every adapter/executor this document's §7 table describes is implemented and tested, not a
+stub: `webhook_verifier.py` (real signature verification), the webhook ingestion endpoint
+(real signature check + idempotent persistence + background-worker processing),
+`payment_link_adapter.py`/`subscription_adapter.py` (real Razorpay API calls, gated behind
+credential availability via `gateway_factory.py` — falling back to `simulator_gateway.py`
+only when `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` aren't configured, per §7/§8's real-vs-
+simulated rule), and `outcome_service.py` (real payment-link recovery correlation — §10
+below).
+
+## 10. Payment-link recovery correlation
+
+Recovering a one-time payment always means the customer pays through a **new** Payment Link
+(§4), so the resulting `payment.captured`/`payment_link.paid` webhook carries a brand-new
+`razorpay_payment_id`, unrelated to the original failed payment. Verified against
+`razorpay.com/docs`: the **`payment_link.paid`** webhook event fires with `contains:
+["payment_link", "order", "payment"]` — i.e. `payload.payment_link.entity` (including
+`reference_id` and `notes`) and `payload.payment.entity` (the actual captured payment) arrive
+together in a single delivery.
+
+RecoveryOS sets a deterministic `reference_id = f"recoveryos-{recovery_action.id}"`
+(`app/domain/recovery_action_reference.py`) when creating the recovery Payment Link
+(`smart_retry_handler.py` — reused by `DELAYED_RETRY`/`CUSTOMER_ACTION_REQUEST`). When
+Razorpay echoes it back on `payment_link.paid`, `state_reconstruction_service.py` resolves
+`payments.recovery_action_id` from it (idempotently — set once, regardless of delivery
+order), and `app/services/outcome_service.py::reconcile_outcome()` uses that to find the
+originating `RecoveryCase`, verify it's still eligible (not already terminal, matching
+currency), write `actual_recovered_amount` exactly once via an `IS NULL`-guarded conditional
+UPDATE, and drive the case to `SUCCEEDED` through the normal state machine — never a parallel
+status-setting path. A plain `payment.captured` event (no `payment_link` entity — e.g. if a
+merchant hasn't subscribed to `payment_link.paid`) carries no correlation information at all;
+in that case the payment is reconstructed correctly but cannot be traced back to a recovery
+case, a known, disclosed limitation (see `docs/limitations.md`) rather than a silently
+swallowed failure.
+
+The narrower **same-`payment_id`** case (the verified UPI wrong-PIN-then-retry quirk, §3)
+needs no correlation at all — `RecoveryCaseRepository.get_live_case_for_payment()` already
+finds it directly, and this path is tried first in `reconcile_outcome()`.

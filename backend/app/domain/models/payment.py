@@ -27,6 +27,7 @@ class Payment(Base):
         Index("idx_payments_customer", "customer_id"),
         Index("idx_payments_status", "status"),
         Index("idx_payments_order", "razorpay_order_id"),
+        Index("idx_payments_recovery_action", "recovery_action_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -34,6 +35,13 @@ class Payment(Base):
     razorpay_order_id: Mapped[str | None] = mapped_column(String, nullable=True)
     customer_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("customers.id"), nullable=True
+    )
+    # Which RecoveryAction this payment was made *through*, once known (resolved from the
+    # Payment Link's reference_id at reconstruction time — see
+    # app/services/state_reconstruction_service.py and app/domain/recovery_action_reference.py).
+    # Null for the vast majority of payments, which have no recovery history at all.
+    recovery_action_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recovery_actions.id", ondelete="SET NULL"), nullable=True
     )
 
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)  # smallest currency unit (paise)

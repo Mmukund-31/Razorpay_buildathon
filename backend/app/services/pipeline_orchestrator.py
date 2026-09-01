@@ -4,9 +4,10 @@
   (ML+AI+optimizer) -> policy -> execution
 
 This is what app/core/background_worker.py's real per-event handler calls. It is also what a
-later payment.captured webhook uses to resolve a still-open case for the same payment — see
-`_resolve_if_captured` below, which is the concrete wiring behind
-`CaseTrigger.PAYMENT_CAPTURED_EXTERNALLY` (app/domain/recovery_case_state_machine.py).
+later payment.captured (or payment_link.paid) webhook uses to resolve a still-open case —
+see `_resolve_if_captured` below, which delegates to app/services/outcome_service.py, the
+concrete wiring behind `CaseTrigger.PAYMENT_CAPTURED_EXTERNALLY`
+(app/domain/recovery_case_state_machine.py).
 
 Every stage is independently callable (via the API's evaluate/execute endpoints) — this
 orchestrator is a convenience that chains them for the fully-autonomous path, not the only
@@ -23,10 +24,10 @@ from app.domain.models.payment import Payment
 from app.domain.models.webhook_event import WebhookEvent
 from app.domain.recovery_case_state_machine import CaseTrigger
 from app.policies.rules import CONSENT_REQUIRED_ACTIONS
-from app.repositories.recovery_case_repository import RecoveryCaseRepository
 from app.services import (
     analysis_service,
     execution_service,
+    outcome_service,
     policy_service,
     recovery_case_service,
     revenue_signal_service,
@@ -51,13 +52,7 @@ async def handle_webhook_event(session: AsyncSession, webhook_event: WebhookEven
 
 
 async def _resolve_if_captured(session: AsyncSession, payment: Payment, correlation_id: uuid.UUID) -> None:
-    case_repo = RecoveryCaseRepository(session)
-    live_case = await case_repo.get_live_case_for_payment(payment.id)
-    if live_case is None:
-        return
-    await recovery_case_service.transition(
-        session, live_case, CaseTrigger.PAYMENT_CAPTURED_EXTERNALLY, correlation_id
-    )
+    await outcome_service.reconcile_outcome(session, payment, correlation_id)
 
 
 async def process_failed_payment(session: AsyncSession, payment: Payment, correlation_id: uuid.UUID):

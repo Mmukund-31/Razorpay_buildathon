@@ -73,6 +73,18 @@ class RecoveryCase(Base):
     selected_action: Mapped[str | None] = mapped_column(String, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # The amount ACTUALLY captured, written exactly once by a conditional `IS NULL`-guarded
+    # UPDATE (RecoveryCaseRepository.set_actual_recovered_amount) — never `amount` above,
+    # which is the original at-risk amount. Keeping these separate is what lets the dashboard
+    # distinguish expected recovery from actual recovered revenue (docs/decisions.md).
+    actual_recovered_amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Which Payment row actually resolved this case — usually equal to `payment_id`, but
+    # differs exactly in the payment-link-recovery case: `payment_id` stays the original
+    # failed payment, this points at the new payment made through the recovery Payment Link.
+    resolved_payment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("payments.id", ondelete="SET NULL"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

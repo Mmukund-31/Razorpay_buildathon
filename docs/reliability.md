@@ -14,6 +14,8 @@
 | Duplicate webhook cannot duplicate a business action | `webhook_events.razorpay_event_id` UNIQUE (ingestion-level) + `recovery_actions.idempotency_key` UNIQUE, `f"{case_id}:{action_type}:{attempt_count}"` (execution-level) — two independent layers | `tests/unit/test_idempotency.py`, `tests/integration/test_webhook_ingestion.py` (both DB-gated, self-skip without Postgres — see below) |
 | Out-of-order event cannot corrupt current state | `payments.last_event_created_at`/`last_event_sequence_id` watermark, checked in a single conditional UPDATE — never a blind `.status = x` | `tests/unit/test_payment_state_machine.py::test_stale_event_rejected_even_though_target_would_otherwise_be_legal` |
 | A consent-required action cannot dispatch without consent | Three independent layers: (1) `check_consent_required_but_missing` policy rule, (2) the state machine's `BEGIN_EXECUTION` + `CONSENT_REQUIRED` guard, (3) `hinglish_voice_handler.handle()`'s own hard precondition check (raises `ConsentNotRecorded`) | `test_hinglish_voice_execution_blocked_without_consent` (policy+state machine), `tests/unit/test_action_executor.py::test_hinglish_voice_refuses_to_dispatch_without_recorded_consent` (executor) |
+| A payment made through a recovery Payment Link resolves back to its originating case | `outcome_service.reconcile_outcome()` correlates a NEW `razorpay_payment_id` to its `RecoveryAction` via the Payment Link's `reference_id` (`payments.recovery_action_id`), writes `actual_recovered_amount` via an `IS NULL`-guarded conditional UPDATE (write-once), and never regresses an already-terminal case | `tests/integration/test_outcome_service.py` (7 tests), `tests/integration/test_payment_link_correlation.py` (full webhook-to-resolution path) |
+| Two concurrent `execute()` calls for the same case cannot create two actions | `recovery_actions.idempotency_key` UNIQUE constraint is the actual enforcement (the case-level optimistic lock alone is not race-safe here — see `execution_service.py`'s module docstring for why); a losing insert is caught, the session rolled back, and the case re-fetched fresh rather than an unhandled 500 | `tests/integration/test_execute_concurrency.py` — two simultaneous `POST /recovery-cases/{id}/execute` requests, asserts exactly one `RecoveryAction` row |
 
 ## Failure handling per external dependency — implemented, not just documented
 
@@ -25,15 +27,23 @@
 | Database | `GET /api/health` runs `SELECT 1` and reports `"degraded"` (never crashes) on failure. Webhook ingestion returns a 5xx if it can't persist the event — deliberately: Razorpay's own at-least-once delivery with 24h exponential-backoff retry means never faking a 200 to a request we didn't durably record. |
 | Background worker crash | Durability lives in `webhook_events.processing_status` (`PENDING`/`PROCESSING`/`PROCESSED`/`FAILED`), not in-memory queue state — a restarted worker just re-polls `PENDING` rows. `poll_once()` claims rows with `SELECT ... FOR UPDATE SKIP LOCKED`, so multiple workers can safely run concurrently without double-processing the same row. |
 
-## Why 6 of 83 tests self-skip in this environment
+## Test suite status
 
-This development environment has neither Docker nor a local PostgreSQL installation (see the
-Phase 1 report and README's Quickstart note). Tests that genuinely need a live database
-(`tests/integration/test_db_connectivity.py`, `test_webhook_ingestion.py`,
-`tests/unit/test_idempotency.py`, and the intentionally-`skip`'d `test_pipeline_smoke.py`)
-self-skip with an actionable message — `docker compose up -d postgres && alembic upgrade
-head` — rather than being faked as passing or silently deleted. Every other safety-invariant
-test above runs with zero external dependencies and passes in this environment right now.
+The full suite is **113 test functions, 136 collected test cases (parametrized tests expand
+to multiple cases), 135 passing, 1 explicitly skipped, 0 failures** — verified in this
+hardening pass against a real, reachable PostgreSQL instance (a native local Postgres 17
+service, not Docker Compose — Docker's own daemon was not running in this environment; see
+`docs/limitations.md`), so every DB-gated test genuinely ran rather than self-skipping.
+
+Tests that need a live database (`tests/integration/test_db_connectivity.py`,
+`test_webhook_ingestion.py`, `test_outcome_service.py`, `test_payment_link_correlation.py`,
+`test_execute_concurrency.py`, `test_webhook_ordering.py`, `test_database_unavailable.py`,
+`tests/unit/test_idempotency.py`) are written to self-skip with an actionable message —
+`docker compose up -d postgres && alembic upgrade head` — in an environment where no
+database is reachable at all, rather than being faked as passing or silently deleted; that
+path just wasn't exercised in this pass since a database *was* reachable. The single
+remaining skip is `tests/integration/test_pipeline_smoke.py`, marked `@pytest.mark.skip`
+explicitly (not DB-gated) — see that file's docstring for scope.
 
 ## Observability
 

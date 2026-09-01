@@ -19,8 +19,12 @@ dependencies = [
     "lightgbm>=4.5",
     "pandas>=2.2",
     "joblib>=1.4",
-    # app/agents/ai_diagnostician.py's real LLM call (Phase 8).
-    "anthropic>=0.40",
+    # app/agents/ai_diagnostician.py's real LLM call. Floor raised to >=1.0 during the final
+    # hardening pass: the declared >=0.40 floor had drifted a full major version behind what
+    # was actually installed and tested here (1.2.0) — a fresh install today would already
+    # resolve to the 1.x line regardless, so this just makes that explicit rather than leaving
+    # a floor that no longer reflects what's verified to work.
+    "anthropic>=1.0,<2.0",
 ]
 
 [project.optional-dependencies]

@@ -15,6 +15,7 @@ from app.domain.models.payment import Payment
 from app.domain.models.payment_attempt import PaymentAttempt
 from app.domain.models.webhook_event import WebhookEvent
 from app.domain.payment_state_machine import PaymentEvent, PaymentSnapshot, apply_event
+from app.domain.recovery_action_reference import parse_recovery_action_id
 from app.repositories.customer_repository import CustomerRepository
 from app.repositories.payment_repository import PaymentRepository
 from app.services import ledger_service
@@ -36,11 +37,31 @@ async def _find_or_create_customer(
 
 
 async def _find_or_create_payment(
-    session: AsyncSession, *, razorpay_payment_id: str, amount: int, currency: str
+    session: AsyncSession,
+    *,
+    razorpay_payment_id: str,
+    amount: int,
+    currency: str,
+    payment_link_reference_id: str | None,
 ) -> Payment:
+    """Resolves `recovery_action_id` from the Payment Link's `reference_id` whenever it's
+    present in this event — a `payment_link.paid` delivery, per
+    app/services/razorpay_payload_parser.py. Backfills it onto an already-existing row too
+    (not just at creation), since webhook delivery order isn't guaranteed: a plain
+    `payment.captured` (which carries no payment_link entity, so no reference_id) can arrive
+    before the `payment_link.paid` for the same payment_id creates the row without knowing
+    the correlation, and the reference-carrying event catches up moments later. The `IS NULL`
+    check makes this idempotent — set once, never overwritten.
+    """
     repo = PaymentRepository(session)
+    recovery_action_id = (
+        parse_recovery_action_id(payment_link_reference_id) if payment_link_reference_id else None
+    )
     existing = await repo.get_by_razorpay_id(razorpay_payment_id)
     if existing:
+        if existing.recovery_action_id is None and recovery_action_id is not None:
+            existing.recovery_action_id = recovery_action_id
+            await session.flush()
         return existing
     return await repo.add(
         Payment(
@@ -49,6 +70,7 @@ async def _find_or_create_payment(
             currency=currency,
             status=PaymentStatus.CREATED.value,
             is_terminal=False,
+            recovery_action_id=recovery_action_id,
         )
     )
 
@@ -72,6 +94,7 @@ async def apply(
         razorpay_payment_id=parsed.razorpay_payment_id,
         amount=parsed.amount,
         currency=parsed.currency,
+        payment_link_reference_id=parsed.payment_link_reference_id,
     )
     if customer and payment.customer_id is None:
         payment.customer_id = customer.id

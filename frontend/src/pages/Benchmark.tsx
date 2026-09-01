@@ -31,12 +31,15 @@ export default function Benchmark() {
     return (
       <div className="max-w-2xl rounded-lg border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400">
         No benchmark run recorded yet. Run{" "}
-        <code className="text-slate-300">python scripts/run_simulator.py</code> or{" "}
         <code className="text-slate-300">
-          python -m simulator.benchmark.baseline_runner
+          python simulator/benchmark/baseline_runner.py
         </code>{" "}
-        to compare Always Retry, Static Rules, ML Only, and RecoveryOS on the synthetic
-        held-out set. Nothing here is ever hand-authored — see docs/decisions.md.
+        (add <code className="text-slate-300">--run-ai-ablation</code> for the AI arm — see
+        docs/ai-ablation.md) to compare Always Retry, Static Rules, ML Only, and RecoveryOS on
+        the synthetic held-out set. Nothing here is ever hand-authored — see
+        docs/decisions.md. To generate demo cases for the Command Center and Recovery Queue
+        instead, run <code className="text-slate-300">python scripts/seed_db.py</code> or{" "}
+        <code className="text-slate-300">python scripts/run_simulator.py failure-storm</code>.
       </div>
     );
   }

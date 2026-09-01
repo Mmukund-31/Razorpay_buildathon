@@ -7,8 +7,8 @@ Flow (per docs/razorpay-integration.md's verified webhook contract):
 
 Deliberately NO business logic runs inline here — Razorpay requires a 2xx within ~5s, so
 everything past persistence (state reconstruction, ML, AI) happens in the background worker
-(app/core/background_worker.py), which is still a stub in Phase 1. This endpoint's job ends
-at "the event is durably and exactly-once recorded."
+(app/core/background_worker.py). This endpoint's job ends at "the event is durably and
+exactly-once recorded."
 """
 
 from datetime import UTC, datetime

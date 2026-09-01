@@ -101,6 +101,59 @@ validation set's precision/recall tradeoff (now possible — the benchmark harne
 is reproducible) rather than a single hand-picked number, and revisit the placeholder cost
 table once any real intervention-cost data exists.
 
+## ADR-007 — Reviving `outcome_service.py` as the real reconciliation engine, and
+`reference_id` (not `notes`) as the correlation key
+
+**Context**: the dominant real-world recovery path (SMART_RETRY/DELAYED_RETRY/
+CUSTOMER_ACTION_REQUEST) resolves to a fresh Razorpay Payment Link, so the payment that
+eventually gets captured has a different `razorpay_payment_id` than the case's original
+failed payment. Before this hardening pass, `pipeline_orchestrator.py::_resolve_if_captured`
+only checked `RecoveryCaseRepository.get_live_case_for_payment(payment.id)` — which can never
+match a brand-new payment id — so this entire class of recovery silently never resolved.
+`app/services/outcome_service.py` existed as a dead stub the whole time.
+
+**Decision**: revive `outcome_service.py` as the real `reconcile_outcome()` — a distinct
+module from `pipeline_orchestrator.py`, matching the existing pattern where
+`analysis_service.py`/`execution_service.py` are separate from the orchestrator that chains
+them. `pipeline_orchestrator.py::_resolve_if_captured` now just delegates to it.
+
+**Correlation key**: `reference_id`, not `notes`. RecoveryOS already sets a deterministic
+`reference_id = f"recoveryos-{recovery_action.id}"` at Payment Link creation
+(`app/domain/recovery_action_reference.py`), and this is what Razorpay's verified
+`payment_link.paid` webhook echoes back on `payload.payment_link.entity.reference_id`. This
+was chosen over relying on Payment Link `notes` propagating onto the resulting `payment`
+entity, because `reference_id` depends only on what RecoveryOS itself sends and Razorpay
+returns unchanged — it does not depend on an unverified "does Razorpay copy payment-link
+notes onto the payment" behavior. A plain `payment.captured` event with no `payment_link`
+entity (e.g. a merchant not subscribed to `payment_link.paid`) genuinely carries no
+correlation information; this is a disclosed limitation (`docs/limitations.md`), not silently
+papered over.
+
+**Idempotency**: `actual_recovered_amount` is written by a conditional `UPDATE ... WHERE
+actual_recovered_amount IS NULL` — the same "write once, guarded by a DB predicate" pattern
+`PaymentRepository`/`RecoveryCaseRepository` already use elsewhere, not a new mechanism.
+
+## ADR-008 — The idempotency-key UNIQUE constraint, not the case-level optimistic lock, is
+what actually prevents a double `execute()`
+
+**Context discovered while adding a concurrency test** (`test_execute_concurrency.py`): two
+simultaneous `POST /recovery-cases/{id}/execute` requests could raise an unhandled
+`IntegrityError` (surfaced as a 500) instead of the intended idempotent no-op. The case-level
+optimistic lock (`recovery_cases.version`) is NOT sufficient on its own to prevent this: when
+the losing request's `recovery_case_service.transition()` call retries after losing its
+`WHERE version=:expected` race, it re-reads the case and correctly observes the WINNER's now-
+`EXECUTING` status — meaning **both** callers legitimately reach the `RecoveryAction` insert
+with the identical `idempotency_key`, and only the database's own UNIQUE constraint stops the
+second one from persisting.
+
+**Decision**: `execution_service.py`'s `_insert_action_or_recover_from_race()` catches that
+`IntegrityError`, rolls back the losing session's failed insert attempt, and re-fetches the
+case fresh — treating a lost DB-level race exactly like the existing pre-insert
+`get_by_idempotency_key()` hit (a safe, idempotent no-op), never an unhandled 500. This is the
+concrete fix for "can this accidentally execute an action (and thus create a duplicate
+Payment Link) twice" — matching the product spec's own instruction to use database-level
+constraints, not application-level checks alone, as the real enforcement.
+
 ## Why FastAPI
 
 Async-native (matters for the webhook ack-under-5-seconds requirement and the DB-polling

@@ -77,12 +77,22 @@ async def transition(
     consent_recorded: bool = True,
     extra_fields: dict | None = None,
     max_retries: int = 1,
+    resolved_payment_id: uuid.UUID | None = None,
 ) -> RecoveryCase:
     """Applies one trigger to `case`, retrying once on an optimistic-lock loss (another
     worker raced us) by re-reading the case and recomputing — never blindly re-applying the
-    same stale decision."""
+    same stale decision.
+
+    `resolved_payment_id`: freshly checked instead of `case.payment_id` when given — for the
+    payment-link-recovery case (app/services/outcome_service.py), the payment that actually
+    got captured is a DIFFERENT row than the case's original (failed) `payment_id`, which
+    itself never becomes CAPTURED. This is not a cached shortcut: the caller passes the id of
+    a payment it just read fresh in this same request, so the "always re-check live state,
+    never trust a stale flag" invariant this function's docstring promises still holds — the
+    check below still re-reads `payments.status` from the database on every loop iteration.
+    """
     for attempt in range(max_retries + 1):
-        payment_captured = await _payment_captured(session, case.payment_id)
+        payment_captured = await _payment_captured(session, resolved_payment_id or case.payment_id)
         snapshot = RecoveryCaseSnapshot(
             status=RecoveryCaseStatus(case.status),
             attempt_count=case.attempt_count,

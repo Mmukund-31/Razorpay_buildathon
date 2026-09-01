@@ -62,3 +62,8 @@ class DecisionTraceResponse(BaseModel):
     policy_decision: PolicyDecision | None
     execution: ExecutionRecord | None
     outcome: str | None
+    # EXPECTED recovery (the ML-scored candidate's estimate) vs. ACTUAL recovered revenue
+    # (written once, by app/services/outcome_service.py, only once a payment.captured/
+    # payment_link.paid signal is reconciled) — deliberately two separate fields so the
+    # frontend can never conflate a probability estimate with a verified outcome.
+    actual_recovered_amount: int | None

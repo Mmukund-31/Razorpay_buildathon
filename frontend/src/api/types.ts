@@ -93,6 +93,7 @@ export interface DecisionTrace {
   policy_decision: PolicyDecision | null;
   execution: ExecutionRecord | null;
   outcome: string | null;
+  actual_recovered_amount: number | null;
 }
 
 export interface BenchmarkExperiment {

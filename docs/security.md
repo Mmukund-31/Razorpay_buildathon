@@ -84,7 +84,21 @@ Backend dependencies are pinned by minimum version in `backend/pyproject.toml`; 
 (`scikit-learn`, `lightgbm`, `pandas`, `joblib`) and the Anthropic SDK are backend
 dependencies (not optional extras) since `ml_predictor.py`/`ai_diagnostician.py` need them at
 runtime, not just for offline training. `respx` (dev-only) mocks all HTTP-layer tests — no
-test in this suite makes a real network call to Razorpay or Anthropic.
+test in this suite makes a real network call to Razorpay or Anthropic. The `anthropic` floor
+was raised to `>=1.0,<2.0` in the final hardening pass — the declared `>=0.40` had drifted a
+full major version behind what was actually installed and tested (1.2.0).
+
+**One real finding from `npm audit` during this pass, deliberately not force-fixed**:
+`react-router-dom@6.28.0` (the entire 6.x line, through 7.17.0) carries a moderate advisory —
+an open-redirect vector via a backslash in `<Link>`/`useNavigate` targets, and an SSR-only
+hydration issue that doesn't apply here (this is a pure client-rendered SPA). The fix requires
+a major-version jump to `7.18.3+`. Checked this app's actual exposure: every `<Link to=...>`
+call in `frontend/src` builds its target from a server-generated `RecoveryCase.id` (a UUID),
+never from raw user/customer input — there is no code path where an attacker controls a
+navigation target. Given the buildathon-scope timeline and the absence of a real exploitation
+path in this app's actual usage, this was documented rather than risking a major frontend
+routing migration this close to submission; a production hardening pass should still take the
+upgrade.
 
 ## What a production hardening pass would still add
 

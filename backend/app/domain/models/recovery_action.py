@@ -33,6 +33,9 @@ class RecoveryAction(Base):
             name="ck_recovery_actions_status",
         ),
         Index("idx_recovery_actions_case", "recovery_case_id"),
+        # `external_reference` (the Razorpay Payment Link id) is a lookup key now, not just a
+        # display field — see app/services/outcome_service.py's fallback correlation path.
+        Index("idx_recovery_actions_external_reference", "external_reference"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

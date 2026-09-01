@@ -80,7 +80,7 @@ true probability, not the probability itself). Future work: isotonic/Platt calib
 post-processing step, and re-tuning `MIN_CONFIDENCE` (see below) directly against this number
 rather than a priori.
 
-## Baselines and the 4-way benchmark
+## Baselines and the 4-way full-dataset benchmark, plus a 5-way AI ablation
 
 `simulator/benchmark/baseline_runner.py` runs all 4 baselines against the SAME held-out test
 set (`ml/data/test.csv`, 7,500 rows never touched during training or threshold selection),
@@ -92,15 +92,25 @@ probability function is fully known by construction, which is what makes asking 
 different action had been chosen" legitimate here — it would not be for real logged data
 without off-policy correction).
 
-**Real results from an actual run against all 7,500 held-out rows** (reproducible:
-`python simulator/benchmark/baseline_runner.py`, ~11 seconds):
+**Important scope note, corrected in this hardening pass**: despite its name, `RECOVERYOS_FULL`
+does **not** call the AI diagnostician — running all 7,500 rows through a real LLM would be
+slow, costly, and non-deterministic. It is ML + Optimizer + Policy only. The genuine
+ML+AI+Optimizer+Policy arm — matching what `app/services/analysis_service.py` actually does
+in production, including its bounded AI confidence nudge — is a 5th baseline, `RECOVERYOS_AI`,
+run only on a small bounded sample via `--run-ai-ablation`. See **docs/ai-ablation.md** for
+that full writeup; this section covers the always-on, full-dataset 4-way comparison.
 
-| Baseline | Recovered revenue | Recovery rate | Precision | Unnecessary action rate | Revenue/intervention | Policy rejection rate |
-|---|---|---|---|---|---|---|
-| ALWAYS_RETRY | ₹3.69Cr | 21.7% | 0.217 | 78.3% | ₹49,256 | 0% |
-| STATIC_RULES | ₹5.25Cr | 30.4% | 0.312 | 68.8% | ₹71,844 | 0% |
-| ML_ONLY | **₹5.36Cr** | **31.3%** | 0.313 | 68.7% | ₹71,496 | 0% |
-| RECOVERYOS_FULL | ₹4.80Cr | 28.2% | **0.335** | **66.5%** | **₹76,064** | 15.9% |
+**Real results from an actual run against all 7,500 held-out rows** (reproducible:
+`python simulator/benchmark/baseline_runner.py`, ~11 seconds). Money figures are in **₹ Lakh**
+(1 Lakh = ₹100,000) — a prior revision of this table mislabeled this column "Cr", off by 10x;
+the underlying numbers were always correct, only the unit label was wrong:
+
+| Baseline | Recovered revenue | Net Recovery Value | Recovery rate | Precision | Unnecessary action rate | Revenue/intervention | Policy rejection rate |
+|---|---|---|---|---|---|---|---|
+| ALWAYS_RETRY | ₹36.94L | ₹36.93L | 21.7% | 0.217 | 78.3% | ₹49,256 | 0% |
+| STATIC_RULES | ₹52.54L | ₹52.53L | 30.4% | 0.312 | 68.8% | ₹71,844 | 0% |
+| ML_ONLY | **₹53.62L** | **₹95.17L** | **31.3%** | 0.313 | 68.7% | ₹71,496 | 0% |
+| RECOVERYOS_FULL | ₹47.96L | ₹81.89L | 28.2% | **0.335** | **66.5%** | **₹76,064** | 15.9% |
 
 **Read this honestly, per the product spec's own instruction not to fabricate superiority:**
 RecoveryOS does **not** win on raw recovered revenue in this run — ML_ONLY recovers more
@@ -112,6 +122,18 @@ the bar. This is the actual value proposition: **bounded, efficient, explainable
 not maximum blind retry volume. A reviewer should treat "RecoveryOS recovers slightly less
 gross revenue while intervening on far fewer cases and being far more precise about which
 ones" as the real, reportable finding — not something to tune away.
+
+**Net Recovery Value needs one more honest caveat.** It is computed from *expected* recovered
+revenue (each baseline's own probability estimate × amount, minus intervention and risk cost)
+— not the *realized* recovered revenue column next to it. ML_ONLY's Net Recovery Value
+(₹95.17L) looks dramatically higher than its actual recovered revenue (₹53.62L) precisely
+because it never applies policy discipline to temper an optimistic probability estimate, and
+its calibration is measurably worse (ECE 0.258 here vs. RECOVERYOS_FULL's own gap: ₹81.89L
+expected vs. ₹47.96L realized, ECE 0.290 on this run). **This gap is the calibration problem
+made concrete**: an uncalibrated or overconfident probability estimate inflates an
+expected-value-based objective in a way the realized outcome does not bear out — exactly why
+`docs/decisions.md` and the calibration analysis above matter for a metric that is used to
+make real financial decisions, not just to score a model on a leaderboard.
 
 **One real, disclosed course-correction that happened during this evaluation**: the initial
 `MIN_CONFIDENCE` placeholder (0.55) turned out to reject the overwhelming majority of

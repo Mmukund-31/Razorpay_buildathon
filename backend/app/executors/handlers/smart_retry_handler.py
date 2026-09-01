@@ -7,6 +7,7 @@ there is no "retry a failed payment" API, this is the actual real mechanism.
 from app.domain.models.customer import Customer
 from app.domain.models.payment import Payment
 from app.domain.models.recovery_action import RecoveryAction
+from app.domain.recovery_action_reference import build_reference_id
 from app.integrations.gateway_interface import PaymentLinkGateway
 
 EXPIRE_BY_SECONDS = 24 * 3600
@@ -22,7 +23,7 @@ async def handle(
     result = await payment_link_adapter.create_payment_link(
         amount=payment.amount,
         currency=payment.currency,
-        reference_id=f"recoveryos-{recovery_action.id}",
+        reference_id=build_reference_id(recovery_action.id),
         description=f"Complete your payment of {payment.amount / 100:.2f} {payment.currency}",
         customer_name=customer.name if customer else None,
         customer_email=customer.email if customer else None,

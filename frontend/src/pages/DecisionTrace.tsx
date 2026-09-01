@@ -4,6 +4,13 @@ import { formatPaise, formatPercent } from "../components/StatTile";
 import { useApi } from "../hooks/useApi";
 import type { DecisionTrace as DecisionTraceType } from "../api/types";
 
+function humanizeReasonCode(code: string): string {
+  return code
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
@@ -103,19 +110,40 @@ export default function DecisionTrace() {
 
       <Section title="4. Why policy allowed or rejected it">
         {data.policy_decision ? (
-          <div className="text-sm">
-            <p className={data.policy_decision.allowed ? "text-emerald-400" : "text-rose-400"}>
-              {data.policy_decision.allowed ? "Allowed" : "Rejected"} (policy{" "}
-              {data.policy_decision.policy_version})
-            </p>
-            {data.policy_decision.reason_codes.length > 0 && (
-              <ul className="mt-2 list-inside list-disc text-slate-400">
-                {data.policy_decision.reason_codes.map((code) => (
-                  <li key={code}>{code}</li>
-                ))}
-              </ul>
-            )}
-          </div>
+          data.policy_decision.allowed ? (
+            <div className="text-sm">
+              <p className="text-emerald-400">Allowed (policy {data.policy_decision.policy_version})</p>
+            </div>
+          ) : (
+            <div className="rounded border border-rose-900 bg-rose-950/40 p-3 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-rose-400">
+                AI recommendation blocked
+              </p>
+              <p className="mt-1 text-slate-200">
+                Action: <span className="font-mono">{data.selected_action ?? "—"}</span>
+              </p>
+              <p className="mt-1 text-slate-300">
+                Reason:{" "}
+                {data.policy_decision.reason_codes.length > 0
+                  ? data.policy_decision.reason_codes.map(humanizeReasonCode).join(", ")
+                  : "—"}
+              </p>
+              {(() => {
+                const blockedCandidate = data.candidates.find(
+                  (c) => c.action_type === data.selected_action,
+                );
+                return blockedCandidate ? (
+                  <p className="mt-1 text-slate-400">
+                    Potential unnecessary intervention:{" "}
+                    <span className="text-slate-200">
+                      {formatPaise(blockedCandidate.expected_recovery)}
+                    </span>
+                  </p>
+                ) : null;
+              })()}
+              <p className="mt-1 text-xs text-slate-500">policy {data.policy_decision.policy_version}</p>
+            </div>
+          )
         ) : (
           <p className="text-sm text-slate-500">No policy evaluation yet.</p>
         )}
@@ -157,6 +185,20 @@ export default function DecisionTrace() {
           <p className="text-sm text-slate-500">No action executed yet.</p>
         )}
         {data.outcome && <p className="mt-2 text-sm text-slate-300">{data.outcome}</p>}
+        {data.actual_recovered_amount != null && (
+          <div className="mt-3 rounded border border-emerald-900 bg-emerald-950/30 p-3 text-sm">
+            <p className="text-xs uppercase tracking-wide text-emerald-500">
+              Actual recovered revenue
+            </p>
+            <p className="mt-1 text-lg font-semibold text-emerald-300">
+              {formatPaise(data.actual_recovered_amount, data.payment.currency)}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Verified via a reconciled payment.captured/payment_link.paid webhook — distinct
+              from the expected-value estimate above.
+            </p>
+          </div>
+        )}
       </Section>
     </div>
   );

@@ -83,9 +83,22 @@ async def client():
     """An httpx AsyncClient against the app via ASGI transport. Deliberately does NOT trigger
     FastAPI lifespan (startup/shutdown) — the background worker never starts, so no async task
     needs cleanup, and GET /api/health still works because it opens its own DB session
-    on-demand rather than depending on lifespan state."""
+    on-demand rather than depending on lifespan state.
+
+    Disposes `app.db.session.get_engine()`'s process-cached engine on teardown: pytest-asyncio
+    runs each test function in its own event loop, but that engine (and the asyncpg
+    connections its pool holds) is `@lru_cache`d at process scope. Without this, a connection
+    checked back into the pool under one test's event loop gets handed to a *later* test
+    running under a different loop — fatal on Windows' ProactorEventLoop, whose transport is
+    tied to the loop that created it. A fresh engine per test keeps every connection bound to
+    the loop that's actually still alive.
+    """
+    from app.db.session import get_engine, get_sessionmaker
     from app.main import app
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+    await get_engine().dispose()
+    get_engine.cache_clear()
+    get_sessionmaker.cache_clear()

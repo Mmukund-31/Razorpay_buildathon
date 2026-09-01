@@ -3,7 +3,29 @@ scenario must drive events through the SAME ingestion/pipeline code real Razorpa
 use — never a separate fake path (docs/decisions.md ADR-004) — so what the demo shows is
 what the production code path actually does under that condition.
 
-TODO(phase-16): implement each generator function; wire into POST /api/simulator/scenario.
+5 of the 8 scenarios below have a generator function wired into
+`simulator/scenarios/scenario_runner.py::SCENARIO_RUNNERS`, reachable via
+`POST /api/simulator/scenario` and the Simulation page's Failure Injection panel:
+`bank_failure`, `api_timeout`, `duplicate_webhook`, `out_of_order_webhook`,
+`already_recovered_payment` — each is a real webhook-shaped event (or sequence of them).
+
+The remaining 3 — `malformed_ai_response`, `low_confidence_ml_prediction`,
+`database_unavailable` — are deliberately NOT wired the same way. Each tests an internal
+component's failure mode, not a webhook payload shape: forcing them into this module's "pure
+data generation" contract would mean reaching into internal state (mocking the LLM response,
+forcing an ML score, severing the DB) from what's supposed to be a webhook-shape generator —
+exactly the "parallel fake path" ADR-004 rules out. They are proven instead by dedicated
+tests that exercise the real code directly:
+
+- `malformed_ai_response` → `backend/tests/unit/test_ai_diagnostician.py`
+  (`test_malformed_json_is_rejected` and siblings) — a response that fails
+  `AIDiagnosisOutput` validation is recorded `is_valid=False` and never reaches the optimizer.
+- `low_confidence_ml_prediction` → `backend/tests/unit/test_policy_engine.py`
+  (`test_rejects_confidence_below_min`) — the policy engine rejects with
+  `CONFIDENCE_BELOW_MIN` before a case can reach `POLICY_APPROVED`.
+- `database_unavailable` → `backend/tests/integration/test_database_unavailable.py` — webhook
+  ingestion returns a real 5xx (via FastAPI's dependency-override mechanism simulating an
+  unreachable DB), never a fake 200 ack, and persists nothing.
 """
 
 from dataclasses import dataclass

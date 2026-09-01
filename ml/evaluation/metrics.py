@@ -6,8 +6,8 @@ counterfactually-simulated) data.
 
 Each outcome record is a dict with (at minimum): action, recovered (bool), amount (int,
 paise), expected_recovery (float), intervention_cost (float), abstained (bool),
-policy_rejected (bool), attempts (int). `predicted_probability` is required only for
-`calibration_error`.
+policy_rejected (bool), attempts (int). `risk_cost` (float) is required only for
+`net_recovery_value`; `predicted_probability` is required only for `calibration_error`.
 """
 
 import numpy as np
@@ -41,6 +41,98 @@ def unnecessary_action_rate(outcomes: list[dict]) -> float:
     if not acted:
         return 0.0
     return sum(1 for o in acted if not o.get("recovered")) / len(acted)
+
+
+def net_recovery_value(outcomes: list[dict]) -> float:
+    """Expected Recovered Revenue - Intervention Cost - Risk Cost - Unnecessary Action Cost,
+    summed across outcomes — the objective the task asks the optimizer to actually pursue,
+    instead of maximum gross recovered amount alone (see docs/ai-ablation.md and
+    docs/ml-evaluation.md's gross-vs-net framing). "Unnecessary action cost" is the
+    intervention cost paid on cases that were acted on but did NOT recover — money spent for
+    nothing, counted once here (not double-counted on top of `intervention_cost`, which
+    already includes it economically; this metric is the fully-loaded net figure, not an
+    additive stack of overlapping costs).
+    """
+    total = 0.0
+    for o in outcomes:
+        if o.get("abstained") or o.get("policy_rejected"):
+            continue
+        expected_recovery = o.get("expected_recovery", 0.0)
+        intervention_cost = o.get("intervention_cost", 0.0)
+        risk_cost = o.get("risk_cost", 0.0)
+        total += expected_recovery - intervention_cost - risk_cost
+    return float(total)
+
+
+def diagnosis_accuracy(predicted_failure_classes: list[str], true_failure_classes: list[str]) -> float:
+    """Fraction where the AI's stated failure_class matches the row's actual (synthetic
+    ground-truth) failure_class. Both lists must already be filtered to rows where the AI
+    produced a valid diagnosis — this is a real accuracy metric, not an agreement-with-ML one."""
+    if not predicted_failure_classes:
+        return 0.0
+    matches = sum(
+        1 for p, t in zip(predicted_failure_classes, true_failure_classes, strict=True) if p == t
+    )
+    return matches / len(predicted_failure_classes)
+
+
+def recommended_action_agreement_rate(ai_actions: list[str], optimizer_actions: list[str]) -> float:
+    """Fraction of rows where the AI's recommended_action matches the action the optimizer
+    ultimately chose (post-nudge) — NOT ground truth. Measures how much the AI's opinion and
+    the deterministic EV-argmax already agree, i.e. how much genuine influence the bounded
+    nudge (app/services/analysis_service.py's _AI_NUDGE_MAX_FRACTION) actually has."""
+    if not ai_actions:
+        return 0.0
+    matches = sum(1 for a, o in zip(ai_actions, optimizer_actions, strict=True) if a == o)
+    return matches / len(ai_actions)
+
+
+def llm_failure_rate(ai_results: list[dict]) -> float:
+    """Fraction of AI diagnostician calls that did not return a valid, schema-conforming
+    result — `is_valid=False` for any reason (no_api_key, circuit_open, invalid_output,
+    call_failed). Mirrors app.agents.ai_diagnostician.AIDiagnosisResult.is_valid exactly, no
+    reinterpretation of what counts as a failure."""
+    if not ai_results:
+        return 0.0
+    return sum(1 for r in ai_results if not r.get("is_valid")) / len(ai_results)
+
+
+def llm_latency_percentiles(ai_results: list[dict]) -> dict:
+    return latency_percentiles([r["latency_ms"] for r in ai_results if r.get("latency_ms") is not None])
+
+
+def ai_ablation_metrics(
+    *, outcomes: list[dict], ai_results: list[dict], true_failure_classes: list[str]
+) -> dict:
+    """Every AI-specific metric the ablation study needs, in one call — kept separate from
+    `all_metrics()` because these require extra per-row inputs (`ai_results`,
+    `true_failure_classes`) that no other baseline has."""
+    ai_predicted_classes = [
+        r["output"]["failure_class"] if r.get("is_valid") and r.get("output") else None for r in ai_results
+    ]
+    ai_actions = [
+        r["output"]["recommended_action"] if r.get("is_valid") and r.get("output") else None
+        for r in ai_results
+    ]
+    chosen_actions = [o["action"] for o in outcomes]
+
+    valid_pairs = [
+        (p, t) for p, t in zip(ai_predicted_classes, true_failure_classes, strict=True) if p is not None
+    ]
+    agreement_pairs = [
+        (a, c) for a, c in zip(ai_actions, chosen_actions, strict=True) if a is not None
+    ]
+
+    return {
+        "diagnosis_accuracy": diagnosis_accuracy(
+            [p for p, _ in valid_pairs], [t for _, t in valid_pairs]
+        ),
+        "recommended_action_agreement_rate": recommended_action_agreement_rate(
+            [a for a, _ in agreement_pairs], [c for _, c in agreement_pairs]
+        ),
+        "llm_failure_rate": llm_failure_rate(ai_results),
+        **{f"llm_latency_ms_{k}": v for k, v in llm_latency_percentiles(ai_results).items()},
+    }
 
 
 def average_attempts(outcomes: list[dict]) -> float:
@@ -115,6 +207,7 @@ def all_metrics(outcomes: list[dict], *, predicted_probabilities: list[float] | 
         "recovered_revenue": recovered_revenue(outcomes),
         "recovery_rate": recovery_rate(outcomes),
         "expected_recovery": expected_recovery(outcomes),
+        "net_recovery_value": net_recovery_value(outcomes),
         "revenue_per_intervention": revenue_per_intervention(outcomes),
         "unnecessary_action_rate": unnecessary_action_rate(outcomes),
         "avg_attempts": average_attempts(outcomes),

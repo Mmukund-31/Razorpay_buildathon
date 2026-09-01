@@ -127,4 +127,5 @@ async def build(session: AsyncSession, case: RecoveryCase, payment: Payment) -> 
             )
         ),
         outcome=_derive_outcome(case),
+        actual_recovered_amount=case.actual_recovered_amount,
     )

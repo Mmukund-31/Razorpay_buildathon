@@ -4,7 +4,7 @@ against a dataset. See simulator/benchmark/baseline_runner.py (Phase 18)."""
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, String, func
+from sqlalchemy import CheckConstraint, DateTime, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +27,11 @@ class Experiment(Base):
     baseline_type: Mapped[str] = mapped_column(String, nullable=False)
     dataset_ref: Mapped[str | None] = mapped_column(String, nullable=True)
     config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Set only for a bounded-sample run (currently RECOVERYOS_AI — see
+    # simulator/benchmark/baseline_runner.py) so the run self-documents that it evaluated a
+    # subset, not the full dataset, at the persistence layer rather than only in prose.
+    sample_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sampling_seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="PENDING")
