@@ -26,7 +26,16 @@ export default function Benchmark() {
   if (loading && !data) return <p className="text-slate-400">Loading…</p>;
   if (error) return <p className="text-rose-400">Failed to load benchmark: {error}</p>;
 
-  const experiments = data?.experiments ?? [];
+  // /analytics/benchmark returns full run history, most-recent-first, so the same
+  // baseline_type can appear many times (every past run). Keep only the latest run per
+  // baseline for display — otherwise React sees duplicate keys and the bars for a repeatedly
+  // re-run baseline stack on top of each other instead of showing one current comparison.
+  const seenBaselines = new Set<string>();
+  const experiments = (data?.experiments ?? []).filter((e) => {
+    if (seenBaselines.has(e.baseline_type)) return false;
+    seenBaselines.add(e.baseline_type);
+    return true;
+  });
   if (experiments.length === 0) {
     return (
       <div className="max-w-2xl rounded-lg border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400">

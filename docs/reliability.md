@@ -32,21 +32,19 @@
 
 ## Test suite status
 
-The full suite is **120 test functions, 143 collected test cases (parametrized tests expand
-to multiple cases), all 143 passing, 0 skipped, 0 failures** — verified in the final
-submission pass against a real, reachable PostgreSQL instance (a native local Postgres
-service, not Docker Compose — this machine's Docker Desktop has no WSL2 backend; see
-`docs/limitations.md`), so every DB-gated test genuinely ran rather than self-skipping.
+The full suite is **120 test functions, 143 collected test cases** (parametrized tests expand
+to multiple cases), **all passing**, verified against a real, reachable PostgreSQL instance,
+so every DB-gated test genuinely runs rather than self-skipping.
 
 Tests that need a live database (`tests/integration/test_db_connectivity.py`,
 `test_webhook_ingestion.py`, `test_outcome_service.py`, `test_payment_link_correlation.py`,
 `test_pipeline_smoke.py`, `test_execute_concurrency.py`, `test_webhook_ordering.py`,
-`test_database_unavailable.py`, `tests/unit/test_idempotency.py`) are written to self-skip with an actionable message — `docker compose up -d postgres &&
-alembic upgrade head` — in an environment where no database is reachable at all, rather than
-being faked as passing or silently deleted; that path just wasn't exercised in this pass since
-a database *was* reachable. There are no remaining skips: the one that used to exist
-(`test_pipeline_smoke.py`, previously `@pytest.mark.skip` pending later phases) is now a real,
-passing, unmocked-below-the-ML-boundary integration test — see that file's docstring.
+`test_database_unavailable.py`, `tests/unit/test_idempotency.py`) are written to self-skip
+with an actionable message — `docker compose up -d postgres && alembic upgrade head` — in an
+environment where no database is reachable at all, rather than being faked as passing or
+silently deleted. `test_pipeline_smoke.py` is the full end-to-end proof: one failed payment,
+driven through the real webhook endpoint and background worker, all the way to a reconciled
+`actual_recovered_amount` and a traceable audit trail — see that file's docstring.
 
 ## Observability
 

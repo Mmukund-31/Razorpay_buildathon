@@ -101,21 +101,20 @@ validation set's precision/recall tradeoff (now possible — the benchmark harne
 is reproducible) rather than a single hand-picked number, and revisit the placeholder cost
 table once any real intervention-cost data exists.
 
-## ADR-007 — Reviving `outcome_service.py` as the real reconciliation engine, and
-`reference_id` (not `notes`) as the correlation key
+## ADR-007 — `outcome_service.py` as the reconciliation engine, and `reference_id` (not
+`notes`) as the correlation key
 
 **Context**: the dominant real-world recovery path (SMART_RETRY/DELAYED_RETRY/
 CUSTOMER_ACTION_REQUEST) resolves to a fresh Razorpay Payment Link, so the payment that
 eventually gets captured has a different `razorpay_payment_id` than the case's original
-failed payment. Before this hardening pass, `pipeline_orchestrator.py::_resolve_if_captured`
-only checked `RecoveryCaseRepository.get_live_case_for_payment(payment.id)` — which can never
-match a brand-new payment id — so this entire class of recovery silently never resolved.
-`app/services/outcome_service.py` existed as a dead stub the whole time.
+failed payment. Resolving a case correctly for this path requires correlating that brand-new
+payment back to the case that originated it — `RecoveryCaseRepository.
+get_live_case_for_payment(payment.id)` alone can never match a new payment id.
 
-**Decision**: revive `outcome_service.py` as the real `reconcile_outcome()` — a distinct
-module from `pipeline_orchestrator.py`, matching the existing pattern where
+**Decision**: `outcome_service.py` owns `reconcile_outcome()` — a distinct module from
+`pipeline_orchestrator.py`, matching the existing pattern where
 `analysis_service.py`/`execution_service.py` are separate from the orchestrator that chains
-them. `pipeline_orchestrator.py::_resolve_if_captured` now just delegates to it.
+them. `pipeline_orchestrator.py::_resolve_if_captured` delegates to it.
 
 **Correlation key**: `reference_id`, not `notes`. RecoveryOS already sets a deterministic
 `reference_id = f"recoveryos-{recovery_action.id}"` at Payment Link creation

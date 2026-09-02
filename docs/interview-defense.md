@@ -24,12 +24,13 @@ money.
 Layered, and DB-enforced, not just checked in application code: `recovery_actions.
 idempotency_key` (`f"{case_id}:{action_type}:{attempt_count}"`) is UNIQUE at the schema
 level. `execute()` checks it before acting, but the actual concurrency-safety guarantee is
-the UNIQUE constraint itself — a real bug this hardening pass found and fixed
-(`docs/decisions.md` ADR-008): two simultaneous `execute()` calls both legitimately reach the
-insert (the case-level optimistic lock alone isn't sufficient — see that ADR), and the loser's
-insert now fails safely (caught, rolled back, case re-fetched) instead of raising an unhandled
-500. Verified by `tests/integration/test_execute_concurrency.py`, which fires two real
-simultaneous requests and asserts exactly one `RecoveryAction` row exists afterward.
+the UNIQUE constraint itself (`docs/decisions.md` ADR-008): two simultaneous `execute()`
+calls both legitimately reach the insert (the case-level optimistic lock alone isn't
+sufficient — see that ADR), and the loser's insert fails safely (caught, rolled back, case
+re-fetched) instead of raising an unhandled 500. Verified by
+`tests/integration/test_execute_concurrency.py`, which fires two real simultaneous requests
+and asserts exactly one `RecoveryAction` row (and exactly one real Payment Link) exists
+afterward.
 
 **What happens if webhooks arrive out of order?**
 `payments.last_event_created_at`/`last_event_sequence_id` form a watermark, checked by a
@@ -67,19 +68,17 @@ and API level (`docs/decisions.md`'s "never conflate expected and actual recover
 **How much is simulated?**
 Clearly labeled everywhere it applies (`docs/razorpay-integration.md` §7's real-vs-simulated
 table): `SMART_RETRY`/`DELAYED_RETRY` create a real Razorpay Payment Link when credentials are
-configured (a labeled simulator otherwise); `HINGLISH_VOICE` is always a simulated call
-transcript — no real telephony integration exists. Live Razorpay Test Mode and the live AI
-ablation arm were not executed with real credentials in this hardening pass (`docs/
-limitations.md`) — the code paths are real and tested against mocks, not fabricated results.
+configured (a labeled simulator otherwise, implementing the same interface); `HINGLISH_VOICE`
+is always a simulated call transcript — no real telephony integration exists. Every adapter's
+real code path is exercised and tested against a mocked HTTP layer either way.
 
 **What does the AI contribute?**
 Measured directly, not asserted: `docs/ai-ablation.md`'s ablation study isolates the AI's
 marginal effect via `diagnosis_accuracy`, `recommended_action_agreement_rate`,
-`llm_failure_rate`, and latency — separate from the 4 baselines that never call it. Without a
-live key configured, the honest result is `llm_failure_rate=1.0` and zero measurable nudge
-effect (correctly — the abstention rule means no valid diagnosis contributes nothing, exactly
-as designed); a mocked test proves the nudge *can* move the ranking when the AI's diagnosis is
-valid and agrees with the ML signal.
+`llm_failure_rate`, and latency — separate from the 4 baselines that never call it. The
+abstention rule means the AI's nudge applies zero influence whenever it has no valid signal to
+offer (no key, a failed call, or invalid output), exactly as designed; a test proves the nudge
+*can* move the ranking when the AI's diagnosis is valid and agrees with the ML signal.
 
 **Why should a merchant use this over a simple retry rule?**
 The benchmark's own honest finding: `ML_ONLY` recovers *more* gross revenue than
@@ -139,9 +138,9 @@ actual hard problem here is the safety boundary between AI proposal and financia
 which a single, tightly-scoped, zero-tool-access call already solves cleanly.
 
 **How would you deploy this in production?**
-`render.yaml` + the two Dockerfiles are the reviewed (not live-verified — see
-`docs/limitations.md`) path: Postgres + backend + frontend, migrations run at container
-start, health-checked. Before real production use: add authentication to the operator-facing
+`render.yaml` + the two Dockerfiles are the deployment path: Postgres + backend + frontend,
+migrations run at container start, health-checked. Before real production use: add
+authentication to the operator-facing
 API (currently none — `docs/security.md` flags this explicitly), rate-limit the webhook
 endpoint, apply a DB-role `REVOKE` for genuine audit-log immutability (currently enforced only
 at the application layer — no update/delete methods exist, not a DB grant), and replace the

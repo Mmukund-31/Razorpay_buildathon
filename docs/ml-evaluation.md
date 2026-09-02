@@ -92,18 +92,17 @@ probability function is fully known by construction, which is what makes asking 
 different action had been chosen" legitimate here — it would not be for real logged data
 without off-policy correction).
 
-**Important scope note, corrected in this hardening pass**: despite its name, `RECOVERYOS_FULL`
-does **not** call the AI diagnostician — running all 7,500 rows through a real LLM would be
-slow, costly, and non-deterministic. It is ML + Optimizer + Policy only. The genuine
-ML+AI+Optimizer+Policy arm — matching what `app/services/analysis_service.py` actually does
-in production, including its bounded AI confidence nudge — is a 5th baseline, `RECOVERYOS_AI`,
-run only on a small bounded sample via `--run-ai-ablation`. See **docs/ai-ablation.md** for
-that full writeup; this section covers the always-on, full-dataset 4-way comparison.
+**Scope note**: despite its name, `RECOVERYOS_FULL` does **not** call the AI diagnostician —
+running all 7,500 rows through a real LLM would be slow, costly, and non-deterministic. It is
+ML + Optimizer + Policy only. The genuine ML+AI+Optimizer+Policy arm — matching what
+`app/services/analysis_service.py` actually does in production, including its bounded AI
+confidence nudge — is a 5th baseline, `RECOVERYOS_AI`, run only on a small bounded sample via
+`--run-ai-ablation`. See **docs/ai-ablation.md** for that full writeup; this section covers
+the always-on, full-dataset 4-way comparison.
 
-**Real results from an actual run against all 7,500 held-out rows** (reproducible:
+**Results from a run against all 7,500 held-out rows** (reproducible:
 `python simulator/benchmark/baseline_runner.py`, ~11 seconds). Money figures are in **₹ Lakh**
-(1 Lakh = ₹100,000) — a prior revision of this table mislabeled this column "Cr", off by 10x;
-the underlying numbers were always correct, only the unit label was wrong:
+(1 Lakh = ₹100,000):
 
 | Baseline | Recovered revenue | Net Recovery Value | Recovery rate | Precision | Unnecessary action rate | Revenue/intervention | Policy rejection rate |
 |---|---|---|---|---|---|---|---|

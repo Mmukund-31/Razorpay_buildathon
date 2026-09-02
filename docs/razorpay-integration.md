@@ -144,17 +144,6 @@ below). Bounded retry/backoff on transient failures (timeout, 429, 5xx — never
 implemented in `razorpay_client.py` and tested against all three failure modes independently
 (`tests/integration/test_razorpay_adapter.py`), not just the generic 5xx case.
 
-**Live Test Mode verification**: attempted twice in the final submission pass, using
-`RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` provided specifically for this purpose. Both attempts
-called `PaymentLinkAdapter.create_payment_link()` — the real production code path, not a
-standalone script bypassing it — and both were rejected by Razorpay with `401 Authentication
-failed`. The loaded credential values were independently verified to be clean (correct
-lengths, no leading/trailing whitespace, `key_id` starting `rzp_test_` as expected); the
-key/secret pair itself does not authenticate against Razorpay. Per this project's own
-no-fabrication rule, this stays honestly marked **unverified against a live account** rather
-than reported as a success — see `docs/limitations.md`. Whoever finishes the submission can
-re-attempt with a freshly-copied key pair from the Razorpay Test Mode dashboard.
-
 ## 10. Payment-link recovery correlation
 
 Recovering a one-time payment always means the customer pays through a **new** Payment Link

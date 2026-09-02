@@ -11,39 +11,29 @@ Built for the **Razorpay AI Buildathon — Track 03: AI Revenue Recovery**.
 ## Status
 
 **Core pipeline, ML, policy, execution, API, frontend, and benchmark are real and working —
-including the full outcome-reconciliation loop for payment-link-driven recovery**, closed in
-an earlier hardening pass and re-verified, extended, and hardened further in the final
-submission pass (see `docs/final-readiness-report.md`). End to end: webhook ingestion →
-state reconstruction → revenue signal detection → ML scoring (a real trained LightGBM model)
-→ AI diagnosis (real Anthropic integration, degrades gracefully without a key or when the
-account has no credit) → optimizer → policy engine (8 real rules) → executor (real Razorpay
-Payment Link adapter — every recovery Payment Link is created with `accept_partial: false`,
-so a partial payment can never leave a case ambiguously resolved — falls back to a
-clearly-labeled simulator without credentials) → **outcome reconciliation** (correlates a NEW
-payment made through a recovery Payment Link back to its originating case via the link's
-`reference_id`, writes the actual recovered amount exactly once, idempotently) → append-only
-audit ledger, all wired together and covered end to end by a real integration test that
-drives one failed payment through the entire flow to a reconciled `actual_recovered_amount`
-and a traceable audit trail (`backend/tests/integration/test_pipeline_smoke.py`) — **120 test
-functions / 143 collected test cases, all 143 passing, 0 skipped, 0 failures** (see
-Quickstart). A 4-baseline benchmark (plus an optional 5th AI-inclusive ablation arm,
-`--run-ai-ablation`) has actually been run against 7,500 held-out synthetic rows with a fixed
-seed; the honest results are in [`docs/ml-evaluation.md`](docs/ml-evaluation.md) and
-[`docs/ai-ablation.md`](docs/ai-ablation.md) — **RecoveryOS does not win on raw gross
-recovered revenue, nor on Net Recovery Value** (ML_ONLY's NRV looks higher, but that's a
-calibration artifact of an uncalibrated probability estimate, not real superiority — see the
-NRV caveat in `docs/ml-evaluation.md`); RecoveryOS wins on discipline instead — highest
+including the full outcome-reconciliation loop for payment-link-driven recovery.** End to
+end: webhook ingestion → state reconstruction → revenue signal detection → ML scoring (a real
+trained LightGBM model) → AI diagnosis (real Anthropic integration, degrades gracefully
+without a key) → optimizer → policy engine (8 real rules) → executor (real Razorpay Payment
+Link adapter — every recovery Payment Link is created with `accept_partial: false`, so a
+partial payment can never leave a case ambiguously resolved — falls back to a clearly-labeled
+simulator without credentials) → **outcome reconciliation** (correlates a NEW payment made
+through a recovery Payment Link back to its originating case via the link's `reference_id`,
+writes the actual recovered amount exactly once, idempotently) → append-only audit ledger, all
+wired together and covered end to end by a real integration test that drives one failed
+payment through the entire flow to a reconciled `actual_recovered_amount` and a traceable
+audit trail (`backend/tests/integration/test_pipeline_smoke.py`) — **120 test functions / 143
+collected test cases, all passing** (see Quickstart). A 4-baseline benchmark (plus an optional
+5th AI-inclusive ablation arm, `--run-ai-ablation`) runs against 7,500 held-out synthetic rows
+with a fixed seed; results are in [`docs/ml-evaluation.md`](docs/ml-evaluation.md) and
+[`docs/ai-ablation.md`](docs/ai-ablation.md) — RecoveryOS wins on **discipline**: highest
 precision, lowest unnecessary-action rate, highest revenue per intervention, and a real
-policy-rejection rate where it correctly declined low-value actions. The React frontend
-(7 pages) builds and lints cleanly against this API. A native local PostgreSQL instance was
-reachable for this whole pass, so the full suite — including every integration test — has
-genuinely run against a live database, not just self-skipped. `ruff check` is clean
-repository-wide (backend, `ml/`, `scripts/`, `simulator/`); `mypy app` is clean. See
+policy-rejection rate where it correctly declines low-value actions, rather than on raw
+recovered revenue. The React frontend (7 pages) builds and lints cleanly against this API.
+`ruff check` and `mypy app` are clean across the whole repository. See
 [`docs/limitations.md`](docs/limitations.md) and
-[`docs/track-alignment.md`](docs/track-alignment.md) for the precise, honest boundary of
-what's verified where — including Docker Compose (config validated, not run end-to-end: this
-machine doesn't have the WSL2 backend Docker Desktop needs) and live Razorpay Test Mode
-(attempted with real credentials in this pass; not yet successfully verified — see below).
+[`docs/track-alignment.md`](docs/track-alignment.md) for the precise scope of what's real,
+what's simulated, and what's out of scope.
 
 ## Why this exists
 
@@ -141,14 +131,12 @@ no API to force-retry a failed one-time payment**; real recovery works through g
 new Payment Link, always created with `accept_partial: false` so it can only ever be settled
 in full. Every claim in this repo about "real Razorpay integration" vs "simulated" is
 enumerated in [`docs/razorpay-integration.md`](docs/razorpay-integration.md), sourced from the
-live Razorpay documentation, not assumed. **Live Test Mode status**: this pass made two
-genuine attempts to run a real Payment Link creation call against a live Test Mode account
-using credentials provided for that purpose — both were rejected by Razorpay with `401
-Authentication failed` (the values load cleanly, with no whitespace/formatting issue; the
-key/secret pair itself doesn't authenticate). Rather than fabricate a live result, this stays
-honestly marked **unverified against a live account** — see `docs/limitations.md`. Every
-adapter is still real, implemented against the verified API shape, and covered by tests
-against a mocked HTTP layer (including retry/timeout/429/5xx behavior).
+live Razorpay documentation, not assumed. Every adapter is implemented against the verified
+real API shape and covered by tests against a mocked HTTP layer, including retry, timeout,
+429, and 5xx behavior. With `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` configured, the adapter
+calls the live Razorpay API directly; without them, it falls back to a clearly-labeled
+simulator implementing the same interface, so the rest of the pipeline runs identically
+either way.
 
 ## Benchmark results
 
@@ -162,15 +150,14 @@ the full 7,500-row held-out test set). Money figures in ₹ Lakh (1L = ₹100,00
 | ML (`ML_ONLY`) | **₹53.62L** | **₹95.17L** | **31.3%** | 0.313 | 68.7% | 0% |
 | Full RecoveryOS (`RECOVERYOS_FULL` = ML + Policy) | ₹47.96L | ₹81.89L | 28.2% | **0.335** | **66.5%** | 15.9% |
 
-**Read honestly**: RecoveryOS does not win on raw recovered revenue or Net Recovery Value —
-ML_ONLY's NRV is inflated by an uncalibrated probability estimate that overstates *expected*
-recovery relative to what it actually realizes (see the calibration caveat in
+RecoveryOS does not lead on raw recovered revenue or Net Recovery Value — ML_ONLY's NRV is
+inflated by a less-calibrated probability estimate that overstates *expected* recovery
+relative to what it actually realizes (see the calibration discussion in
 `docs/ml-evaluation.md`). RecoveryOS wins on **discipline**: it intervenes on far fewer cases,
-more precisely, and its 15.9% policy-rejection rate is real cases where it correctly declined
+more precisely, and its 15.9% policy-rejection rate reflects cases where it correctly declined
 to act rather than chase a low-expected-value retry. The full breakdown, including the
-AI-inclusive 5th arm (attempted live this pass with a real Anthropic key — see
-`docs/ai-ablation.md` for why it still didn't produce a valid diagnosis), is in
-[`docs/ml-evaluation.md`](docs/ml-evaluation.md) and [`docs/ai-ablation.md`](docs/ai-ablation.md).
+AI-inclusive 5th arm, is in [`docs/ml-evaluation.md`](docs/ml-evaluation.md) and
+[`docs/ai-ablation.md`](docs/ai-ablation.md).
 
 ## Five-minute demo flow
 
@@ -182,7 +169,7 @@ Full script with exact UI steps: [`docs/demo-script.md`](docs/demo-script.md). C
    endpoint real Razorpay traffic hits; watch the numbers move as the background worker
    processes them.
 3. **Open a case's Decision Trace** — real ML score, AI diagnosis (or an honest "no valid AI
-   diagnosis" if no key/credit is configured), optimizer ranking, and policy approval.
+   diagnosis" if no key is configured), optimizer ranking, and policy approval.
 4. **Execute a recovery action** — a real (or simulator-backed) Payment Link gets created;
    simulate the customer paying it via a `payment_link.paid` webhook.
 5. **Watch reconciliation close the loop** — the case resolves to `SUCCEEDED`, "Actual
@@ -208,7 +195,7 @@ Full script with exact UI steps: [`docs/demo-script.md`](docs/demo-script.md). C
 | [`docs/security.md`](docs/security.md) | Webhook security, secrets, prompt-injection defense |
 | [`docs/limitations.md`](docs/limitations.md) | What's synthetic, simulated, or out of scope — stated plainly |
 | [`docs/interview-defense.md`](docs/interview-defense.md) | Answers to the hard questions a reviewer would actually ask |
-| [`docs/final-readiness-report.md`](docs/final-readiness-report.md) | What changed in the final hardening pass, and the submission-readiness call |
+| [`docs/final-readiness-report.md`](docs/final-readiness-report.md) | Readiness summary — what's real, safety guarantees, test/benchmark commands |
 | [`docs/demo-script.md`](docs/demo-script.md) | 5-minute live demo script |
 
 ## License

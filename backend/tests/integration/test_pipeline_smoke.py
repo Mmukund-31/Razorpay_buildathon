@@ -2,9 +2,7 @@
 outcome reconciliation -> actual recovered revenue -> audit ledger flow, driven entirely
 through the real HTTP webhook endpoint (app/api/webhooks.py) and the real background worker
 poll (app/core/background_worker.py) — the same two entry points Razorpay and the running
-worker actually use in production. Nothing here is a stub any more (see
-docs/final-readiness-report.md) — this test is the real proof the module docstring this file
-used to carry promised, not a skip.
+worker actually use in production.
 
 The only thing mocked is the ML predictor's *output*: a fixed, valid probability for
 SMART_RETRY. Everything downstream of that boundary — optimizer expected-value math, the

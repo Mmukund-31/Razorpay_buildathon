@@ -18,8 +18,7 @@ outcome and prove the money actually came back."
 **Actual** Recovered Revenue, Recovery Rate, Active Cases, Actions Executed/Prevented,
 Abstentions — all real aggregate queries (`app/services/dashboard_service.py`), starting at
 honest zeros on a fresh database. Point out that "Recovered Revenue" is the *actual*
-reconciled amount (`RecoveryCase.actual_recovered_amount`), not the original at-risk estimate
-— a real distinction this hardening pass added.
+reconciled amount (`RecoveryCase.actual_recovered_amount`), not the original at-risk estimate.
 
 **0:45 — Generate Failure Storm.** Simulation page (`/simulation`) → "Generate Failure Storm."
 Each event is a real, signed webhook POST through `POST /api/webhooks/razorpay` — the exact
@@ -64,7 +63,7 @@ identical either way (`app/integrations/gateway_factory.py`).
 arrives at the same real `POST /api/webhooks/razorpay` endpoint, signature-verified,
 persisted, and picked up by the background worker.
 
-**3:35 — Outcome reconciliation.** This is the beat this hardening pass made real:
+**3:35 — Outcome reconciliation.** The key beat of the whole flow:
 `app/services/outcome_service.py::reconcile_outcome()` correlates the NEW payment (a
 different `razorpay_payment_id` than the original failed one) back to this exact case via the
 Payment Link's `reference_id`, verifies it's still eligible, and writes
